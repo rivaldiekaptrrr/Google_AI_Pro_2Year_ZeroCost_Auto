@@ -1038,7 +1038,7 @@ class GoogleUltraAutomator:
                                                         if _w == 7 and await sbtn.count() > 0:
                                                             try:
                                                                 await asyncio.sleep(1.5)
-                                                        await sbtn.click(force=True)
+                                                                await sbtn.click(force=True)
                                                             except Exception:
                                                                 pass
                                                     await asyncio.sleep(2.0)
