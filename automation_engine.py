@@ -568,6 +568,8 @@ class GoogleUltraAutomator:
         """Automatically handle Google email + password + 2FA TOTP re-authentication prompts."""
         email = self.account.get("email", "")
         password = self.account.get("password", "")
+        pwd_submitted = False
+        has_totp_secret = bool((self.account.get("totp_secret") or "").strip())
         for _ in range(16):
             self.check_stop()
             if page_obj.is_closed():
@@ -629,11 +631,42 @@ class GoogleUltraAutomator:
             if email and await email_inp.count() > 0 and await email_inp.first.is_visible():
                 pwd_vis = page_obj.locator('input[type="password"], input[name="Passwd"]')
                 if await pwd_vis.count() == 0 or not await pwd_vis.first.is_visible():
-                    self.log(f"检测到登录邮箱输入框，正在填入邮箱并点击下一步: {email}")
-                    await email_inp.first.press_sequentially(email, delay=65)
-                    await email_inp.first.press("Enter")
-                    await asyncio.sleep(4.5)
-                    continue
+                    try:
+                        cur_em = (await email_inp.first.input_value()).strip()
+                    except Exception:
+                        cur_em = ""
+                    if cur_em == email or cur_em.replace(".", "") == email.replace(".", ""):
+                        self.log(f"邮箱已在输入框中，等待 Google 页面跳转加载...")
+                        nxt = page_obj.locator('#identifierNext, button:has-text("下一步"), button:has-text("Next")').first
+                        if await nxt.count() > 0 and await nxt.is_visible():
+                            try:
+                                await nxt.click()
+                            except Exception:
+                                pass
+                        await asyncio.sleep(2.5)
+                        continue
+                    else:
+                        self.log(f"检测到登录邮箱输入框，正在填入邮箱并点击下一步: {email}")
+                        await email_inp.first.click(force=True)
+                        await asyncio.sleep(0.2)
+                        await email_inp.first.press("Control+A")
+                        await asyncio.sleep(0.1)
+                        await email_inp.first.press("Backspace")
+                        await asyncio.sleep(0.2)
+                        await email_inp.first.press_sequentially(email, delay=65)
+                        nxt = page_obj.locator('#identifierNext, button:has-text("下一步"), button:has-text("Next")').first
+                        if await nxt.count() > 0 and await nxt.is_visible():
+                            await nxt.click()
+                        else:
+                            await email_inp.first.press("Enter")
+                        for _ in range(8):
+                            await asyncio.sleep(1.0)
+                            pwd_chk = page_obj.locator('input[type="password"], input[name="Passwd"]')
+                            if await pwd_chk.count() > 0 and await pwd_chk.first.is_visible():
+                                break
+                            if await email_inp.count() == 0 or not await email_inp.first.is_visible():
+                                break
+                        continue
 
             if "Verify it's you" in body or "验证您的身份" in body:
                 btn = page_obj.locator('button:has-text("Verify it\'s you"), button:has-text("验证您的身份"), div[role="button"]:has-text("验证您的身份"), div[role="button"]:has-text("Verify it\'s you")').first
@@ -645,17 +678,39 @@ class GoogleUltraAutomator:
 
             pwd = page_obj.locator('input[type="password"], input[name="Passwd"]')
             if await pwd.count() > 0 and await pwd.first.is_visible():
+                if pwd_submitted:
+                    self.log("Google 正在验证密码中，等待页面响应...")
+                    await asyncio.sleep(2.5)
+                    continue
+
                 self.log("正在自动输入密码通过身份验证...")
                 try:
+                    await pwd.first.click(force=True)
+                    await asyncio.sleep(0.2)
+                    await pwd.first.press("Control+A")
+                    await asyncio.sleep(0.1)
+                    await pwd.first.press("Backspace")
+                    await asyncio.sleep(0.2)
                     await pwd.first.press_sequentially(password, delay=75)
+                    await asyncio.sleep(0.3)
                     next_btn = page_obj.locator('#passwordNext, button:has-text("下一步"), button:has-text("Next")').first
                     if await next_btn.count() > 0 and await next_btn.is_visible():
                         await next_btn.click()
                     else:
                         await pwd.first.press("Enter")
+                    pwd_submitted = True
                 except Exception:
                     return
-                await asyncio.sleep(4.5)
+
+                for _ in range(10):
+                    await asyncio.sleep(1.0)
+                    if await pwd.count() == 0 or not await pwd.first.is_visible():
+                        break
+                    err_loc = page_obj.locator("text=/密码有误|Wrong password|Try again|重新输入/i")
+                    if await err_loc.count() > 0 and await err_loc.first.is_visible():
+                        self.log("⚠️ 检测到密码错误提示，准备重新处理...")
+                        pwd_submitted = False
+                        break
                 continue
 
             if "challenge/recaptcha" in page_obj.url or "证明您不是自动程序" in body or "not a robot" in body:
@@ -679,42 +734,71 @@ class GoogleUltraAutomator:
                     b = open_dialog_btn.nth(idx)
                     if await b.is_visible():
                         btxt = (await b.inner_text()).strip()
-                        if any(k in btxt for k in ("以后再说", "跳过", "取消", "不用了", "Not now", "Skip", "Cancel", "Google Authenticator", "身份验证器")):
+                        dismiss_match = any(k in btxt for k in ("以后再说", "跳过", "取消", "不用了", "Not now", "Skip", "Cancel"))
+                        totp_opt_match = any(k in btxt for k in ("Google Authenticator", "身份验证器"))
+                        if dismiss_match or (totp_opt_match and has_totp_secret):
                             self.log(f"检测到弹窗选项【{btxt}】，正在点击...")
                             await b.click(force=True)
                             await asyncio.sleep(3.5)
                             break
 
             if "Google Authenticator" in body or "身份验证器" in body:
-                totp_vis = page_obj.locator('input[type="tel"], input#totpPin, input[name="totpPin"]')
-                if await totp_vis.count() == 0 or not await totp_vis.first.is_visible():
-                    opt = page_obj.locator("text=/Google Authenticator|身份验证器/i").first
-                    if await opt.count() > 0 and await opt.is_visible():
-                        self.log("选择 Google 身份验证器验证方式...")
-                        await opt.click(force=True)
-                        await asyncio.sleep(3.5)
-                        continue
+                if has_totp_secret:
+                    totp_vis = page_obj.locator('input[type="tel"], input#totpPin, input[name="totpPin"]')
+                    if await totp_vis.count() == 0 or not await totp_vis.first.is_visible():
+                        opt = page_obj.locator("text=/Google Authenticator|身份验证器/i").first
+                        if await opt.count() > 0 and await opt.is_visible():
+                            self.log("选择 Google 身份验证器验证方式...")
+                            await opt.click(force=True)
+                            await asyncio.sleep(3.5)
+                            continue
             elif ("challenge/dp" in page_obj.url or "challenge/az" in page_obj.url or "challenge/pk" in page_obj.url or "扫描二维码" in body) and "challenge/totp" not in page_obj.url:
-                totp_vis = page_obj.locator('input[type="tel"], input#totpPin, input[name="totpPin"]')
-                if await totp_vis.count() == 0 or not await totp_vis.first.is_visible():
-                    try_other = page_obj.locator("text=/试试其他方式|尝试其他方式|Try another way/i").first
-                    if await try_other.count() > 0 and await try_other.is_visible():
-                        self.log("检测到其他验证方式页面 (二维码/推送/密钥)，正在点击【试试其他方式】切换至 2FA 验证码...")
-                        try:
-                            await try_other.click(timeout=4000)
-                        except Exception:
-                            pass
-                        await asyncio.sleep(3.5)
-                        continue
+                if has_totp_secret:
+                    totp_vis = page_obj.locator('input[type="tel"], input#totpPin, input[name="totpPin"]')
+                    if await totp_vis.count() == 0 or not await totp_vis.first.is_visible():
+                        try_other = page_obj.locator("text=/试试其他方式|尝试其他方式|Try another way|Coba cara lain/i").first
+                        if await try_other.count() > 0 and await try_other.is_visible():
+                            self.log("检测到设备推送验证 (challenge/dp)，已配置 totp_secret，正在切换至 Google Authenticator 自动过 2FA...")
+                            try:
+                                await try_other.click(timeout=4000)
+                            except Exception:
+                                pass
+                            await asyncio.sleep(3.5)
+                            continue
+                else:
+                    self.log("📱 检测到设备/手机推送验证 (challenge/dp)，未配置 totp_secret，请在手机上点击确认数字/同意登录 (等待 30 秒)...")
+                    for _w in range(30):
+                        await asyncio.sleep(1.0)
+                        if "challenge/dp" not in page_obj.url and "challenge/az" not in page_obj.url and "challenge/pk" not in page_obj.url:
+                            self.log("✅ 手机端确认通过，继续执行...")
+                            break
+                    continue
 
             if "确认您的辅助邮箱" in body or "Confirm your recovery email" in body:
                 rec_email = (self.account.get("recovery_email") or "").strip()
                 kpe_inp = page_obj.locator('input#knowledge-preregistered-email-response:visible, input[name="knowledgePreregisteredEmailResponse"]:visible, input[type="email"]:visible')
                 if rec_email and await kpe_inp.count() > 0:
+                    try:
+                        cur_kpe = (await kpe_inp.first.input_value()).strip()
+                    except Exception:
+                        cur_kpe = ""
+                    if cur_kpe == rec_email:
+                        self.log("辅助邮箱已填入，等待提交响应...")
+                        await asyncio.sleep(3.0)
+                        continue
                     self.log(f"正在自动填入辅助邮箱完成验证: {rec_email}")
+                    await kpe_inp.first.click(force=True)
+                    await asyncio.sleep(0.2)
+                    await kpe_inp.first.press("Control+A")
+                    await asyncio.sleep(0.1)
+                    await kpe_inp.first.press("Backspace")
+                    await asyncio.sleep(0.2)
                     await kpe_inp.first.press_sequentially(rec_email, delay=65)
                     await kpe_inp.first.press("Enter")
-                    await asyncio.sleep(4.5)
+                    for _ in range(8):
+                        await asyncio.sleep(1.0)
+                        if await kpe_inp.count() == 0 or not await kpe_inp.first.is_visible():
+                            break
                     continue
                 opt = page_obj.locator("text=/确认您的辅助邮箱|Confirm your recovery email/i").first
                 if await opt.count() > 0 and await opt.is_visible():
@@ -742,6 +826,13 @@ class GoogleUltraAutomator:
                     except Exception:
                         return
                     await asyncio.sleep(5)
+                    continue
+                else:
+                    self.log("⚠️ 页面需要 2FA 验证码，但当前账号未配置 totp_secret，请在浏览器中手动输入验证码...")
+                    for _w in range(30):
+                        await asyncio.sleep(1.0)
+                        if await totp.count() == 0 or not await totp.first.is_visible():
+                            break
                     continue
 
             if "accounts.google.com" in page_obj.url or "gds.google.com" in page_obj.url or page_obj.url == "about:blank":
@@ -809,14 +900,31 @@ class GoogleUltraAutomator:
 
                 email_loc = page.locator('input[type="email"], input#identifierId')
                 if await email_loc.count() > 0 and await email_loc.first.is_visible() and "challenge/kpe" not in page.url:
-                    self.log(f"输入邮箱: {email}")
-                    await email_loc.first.press_sequentially(email, delay=65)
+                    try:
+                        cur_em = (await email_loc.first.input_value()).strip()
+                    except Exception:
+                        cur_em = ""
+                    if cur_em != email:
+                        self.log(f"输入邮箱: {email}")
+                        await email_loc.first.click(force=True)
+                        await asyncio.sleep(0.2)
+                        await email_loc.first.press("Control+A")
+                        await asyncio.sleep(0.1)
+                        await email_loc.first.press("Backspace")
+                        await asyncio.sleep(0.2)
+                        await email_loc.first.press_sequentially(email, delay=65)
                     next_btn = page.locator('#identifierNext, button:has-text("下一步"), button:has-text("Next")').first
                     if await next_btn.count() > 0 and await next_btn.is_visible():
                         await next_btn.click()
                     else:
                         await email_loc.first.press("Enter")
-                    await asyncio.sleep(4.5)
+                    for _ in range(8):
+                        await asyncio.sleep(1.0)
+                        pwd_vis = page.locator('input[type="password"], input[name="Passwd"]')
+                        if await pwd_vis.count() > 0 and await pwd_vis.first.is_visible():
+                            break
+                        if await email_loc.count() == 0 or not await email_loc.first.is_visible():
+                            break
 
             # Password + Recovery Email + 2FA
             await self.pass_reauth_on_page(page)
@@ -1011,11 +1119,24 @@ class GoogleUltraAutomator:
                                                     except Exception:
                                                         pass
                                                     if cnt >= 5:
-                                                        await vis.nth(4).click(force=True)
+                                                        zip_field = vis.nth(4)
+                                                        await zip_field.click(force=True)
                                                         await asyncio.sleep(0.2)
-                                                        await vis.nth(4).fill("")
-                                                        await vis.nth(4).press_sequentially(zip_v, delay=85)
-                                                        await asyncio.sleep(0.8)
+                                                        await zip_field.press("Control+A")
+                                                        await asyncio.sleep(0.1)
+                                                        await zip_field.press("Backspace")
+                                                        await asyncio.sleep(0.2)
+                                                        await zip_field.press_sequentially(zip_v, delay=90)
+                                                        await asyncio.sleep(0.3)
+                                                        try:
+                                                            cur_val = (await zip_field.input_value()).strip()
+                                                            if cur_val != zip_v:
+                                                                self.log(f"[{step_tag or 'modal'}] ⚠️ ZIP terpotong ({cur_val}), mengoreksi ulang menjadi: {zip_v}")
+                                                                await zip_field.fill(zip_v)
+                                                                await asyncio.sleep(0.3)
+                                                        except Exception:
+                                                            pass
+                                                        await asyncio.sleep(0.5)
                                                     sbtn = tf.locator('button:has-text("保存卡"), button:has-text("保存"), button:has-text("Save card"), button:has-text("Save"), [role="button"]:has-text("保存")').first
                                                     if await sbtn.count() > 0:
                                                         await asyncio.sleep(1.5)
@@ -1038,7 +1159,7 @@ class GoogleUltraAutomator:
                                                         if _w == 7 and await sbtn.count() > 0:
                                                             try:
                                                                 await asyncio.sleep(1.5)
-                                                        await sbtn.click(force=True)
+                                                                await sbtn.click(force=True)
                                                             except Exception:
                                                                 pass
                                                     await asyncio.sleep(2.0)
