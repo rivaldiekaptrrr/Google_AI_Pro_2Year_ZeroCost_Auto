@@ -1099,44 +1099,93 @@ class GoogleUltraAutomator:
                                                     cvc_v = (self.card.get("cvc") or "").strip()
                                                     holder_v = (self.card.get("holder") or "CARD HOLDER").strip()
                                                     zip_v = (self.card.get("postal_code") or "97201").strip()
+
+                                                    # Step 1: Kolom Nomor Kartu (vis.nth(0))
+                                                    self.log(f"[{step_tag or 'modal'}] ⏳ [1/5] Fokus dan bersihkan kolom Nomor Kartu...")
                                                     await vis.nth(0).click(force=True)
-                                                    await asyncio.sleep(0.2)
-                                                    await vis.nth(0).press_sequentially(cnum, delay=85)
                                                     await asyncio.sleep(0.8)
+                                                    await vis.nth(0).press("Control+A")
+                                                    await asyncio.sleep(0.2)
+                                                    await vis.nth(0).press("Backspace")
+                                                    await asyncio.sleep(0.5)
+
+                                                    self.log(f"[{step_tag or 'modal'}] ✍️ [1/5] Mengetik nomor kartu secara perlahan...")
+                                                    await vis.nth(0).press_sequentially(cnum, delay=120)
+                                                    await asyncio.sleep(1.2)
+
+                                                    # Verifikasi apakah kartu terketik penuh (16 digit)
+                                                    c_cur = re.sub(r"\D", "", await vis.nth(0).input_value() or "")
+                                                    if len(c_cur) < 15:
+                                                        self.log(f"[{step_tag or 'modal'}] ⚠️ Kartu terbaca {len(c_cur)} digit, mengetik ulang nomor kartu...")
+                                                        await vis.nth(0).click(force=True)
+                                                        await asyncio.sleep(0.4)
+                                                        await vis.nth(0).press("Control+A")
+                                                        await asyncio.sleep(0.2)
+                                                        await vis.nth(0).press("Backspace")
+                                                        await asyncio.sleep(0.4)
+                                                        await vis.nth(0).press_sequentially(cnum, delay=140)
+                                                        await asyncio.sleep(1.0)
+
+                                                    # Step 2: Kolom Masa Berlaku MM/YY (vis.nth(1))
+                                                    self.log(f"[{step_tag or 'modal'}] ⏳ [2/5] Fokus dan bersihkan kolom Masa Berlaku (MM/YY)...")
                                                     await vis.nth(1).click(force=True)
-                                                    await asyncio.sleep(0.2)
-                                                    await vis.nth(1).press_sequentially(f"{expm}{expy}", delay=85)
                                                     await asyncio.sleep(0.8)
+                                                    await vis.nth(1).press("Control+A")
+                                                    await asyncio.sleep(0.2)
+                                                    await vis.nth(1).press("Backspace")
+                                                    await asyncio.sleep(0.5)
+
+                                                    self.log(f"[{step_tag or 'modal'}] ✍️ [2/5] Mengetik masa berlaku ({expm}/{expy})...")
+                                                    await vis.nth(1).press_sequentially(f"{expm}{expy}", delay=120)
+                                                    await asyncio.sleep(1.0)
+
+                                                    # Step 3: Kolom CVC / CVV (vis.nth(2))
+                                                    self.log(f"[{step_tag or 'modal'}] ⏳ [3/5] Fokus dan bersihkan kolom CVC / CVV...")
                                                     await vis.nth(2).click(force=True)
-                                                    await asyncio.sleep(0.2)
-                                                    await vis.nth(2).press_sequentially(cvc_v, delay=85)
                                                     await asyncio.sleep(0.8)
+                                                    await vis.nth(2).press("Control+A")
+                                                    await asyncio.sleep(0.2)
+                                                    await vis.nth(2).press("Backspace")
+                                                    await asyncio.sleep(0.5)
+
+                                                    self.log(f"[{step_tag or 'modal'}] ✍️ [3/5] Mengetik CVC ({cvc_v})...")
+                                                    await vis.nth(2).press_sequentially(cvc_v, delay=120)
+                                                    await asyncio.sleep(1.0)
+
+                                                    # Step 4: Kolom Nama Pemegang Kartu (vis.nth(3))
+                                                    self.log(f"[{step_tag or 'modal'}] ⏳ [4/5] Memeriksa nama pemegang kartu...")
                                                     try:
                                                         cur_name = (await vis.nth(3).input_value(timeout=1000)).strip()
                                                         if not cur_name:
-                                                            await vis.nth(3).press_sequentially(holder_v, delay=70)
-                                                            await asyncio.sleep(0.2)
+                                                            await vis.nth(3).click(force=True)
+                                                            await asyncio.sleep(0.5)
+                                                            await vis.nth(3).press_sequentially(holder_v, delay=80)
+                                                            await asyncio.sleep(0.8)
                                                     except Exception:
                                                         pass
+
+                                                    # Step 5: Kolom Kode Pos ZIP (vis.nth(4))
                                                     if cnt >= 5:
-                                                        zip_field = vis.nth(4)
-                                                        await zip_field.click(force=True)
+                                                        self.log(f"[{step_tag or 'modal'}] ⏳ [5/5] Fokus dan bersihkan kolom ZIP ({zip_v})...")
+                                                        await vis.nth(4).click(force=True)
+                                                        await asyncio.sleep(0.8)
+                                                        await vis.nth(4).press("Control+A")
                                                         await asyncio.sleep(0.2)
-                                                        await zip_field.press("Control+A")
-                                                        await asyncio.sleep(0.1)
-                                                        await zip_field.press("Backspace")
-                                                        await asyncio.sleep(0.2)
-                                                        await zip_field.press_sequentially(zip_v, delay=90)
-                                                        await asyncio.sleep(0.3)
-                                                        try:
-                                                            cur_val = (await zip_field.input_value()).strip()
-                                                            if cur_val != zip_v:
-                                                                self.log(f"[{step_tag or 'modal'}] ⚠️ ZIP terpotong ({cur_val}), mengoreksi ulang menjadi: {zip_v}")
-                                                                await zip_field.fill(zip_v)
-                                                                await asyncio.sleep(0.3)
-                                                        except Exception:
-                                                            pass
+                                                        await vis.nth(4).press("Backspace")
                                                         await asyncio.sleep(0.5)
+
+                                                        self.log(f"[{step_tag or 'modal'}] ✍️ [5/5] Mengetik ZIP ({zip_v})...")
+                                                        await vis.nth(4).press_sequentially(zip_v, delay=120)
+                                                        await asyncio.sleep(0.8)
+
+                                                        cur_zip = (await vis.nth(4).input_value()).strip()
+                                                        if cur_zip != zip_v:
+                                                            await vis.nth(4).fill(zip_v)
+                                                            await asyncio.sleep(0.5)
+
+                                                    # Jeda tenang untuk memastikan semua validasi front-end Google selesai
+                                                    await asyncio.sleep(1.5)
+                                                    self.log(f"[{step_tag or 'modal'}] ✅ Semua kolom selesai diisi dengan tenang, menekan tombol simpan...")
                                                     sbtn = tf.locator('button:has-text("保存卡"), button:has-text("保存"), button:has-text("Save card"), button:has-text("Save"), [role="button"]:has-text("保存")').first
                                                     if await sbtn.count() > 0:
                                                         await asyncio.sleep(1.5)
