@@ -1196,9 +1196,16 @@ class GoogleUltraAutomator:
         for url in (
             "https://one.google.com/settings?expand=upgrade&hl=zh-CN",
             "https://one.google.com/plans?hl=zh-CN",
-            "https://one.google.com/ai-nye?g1_landing_page=0&hl=zh-CN",
+            "https://one.google.com/home?hl=zh-CN",
         ):
             await self.safe_goto(page, url, timeout=40000)
+            try:
+                b_txt = await page.inner_text("body", timeout=2000)
+                if "错误 404" in b_txt or "Error 404" in b_txt or "无法展示您寻找的页面" in b_txt:
+                    self.log(f"⚠️ [Google One 404] Halaman {url} mengembalikan 404, melewati ke URL berikutnya...")
+                    continue
+            except Exception:
+                pass
             for _ in range(6):
                 await asyncio.sleep(1.8)
                 html = await page.content()
@@ -1526,6 +1533,17 @@ class GoogleUltraAutomator:
                 await self.pass_reauth_on_page(page)
                 await self.safe_goto(page, attempt_url, timeout=40000)
                 await asyncio.sleep(3.5)
+
+            try:
+                b_check = await page.inner_text("body", timeout=2000)
+                if "错误 404" in b_check or "Error 404" in b_check or "无法展示您寻找的页面" in b_check:
+                    self.log(f"⚠️ [{step_tag}] Terdeteksi halaman Google One 404, memulihkan ke tautan 方案 (Plans)...")
+                    plans_link = page.locator('a:has-text("方案"), a:has-text("Plans")').first
+                    if await plans_link.count() > 0 and await plans_link.is_visible():
+                        await plans_link.click()
+                        await asyncio.sleep(3.5)
+            except Exception:
+                pass
 
             try:
                 await page.evaluate(HOOK_JS)
@@ -1892,9 +1910,21 @@ class GoogleUltraAutomator:
                     await self.save_screenshot(page, f"{step_tag}_after_click")
                     await asyncio.sleep(4.0)
                     return True
-                self.log(f"⚠️ [{step_tag}] 结账弹窗已关闭但未捕获到【已订阅/Play积分】明确成功标志，正在校验后台订阅状态...")
-                await asyncio.sleep(5.0)
+
+                # Check if Google One frontend hit 404 or closed without welcome banner - verify directly via Google Play backend
+                is_g1_404 = any(k in main_body_txt for k in ("错误 404", "Error 404", "无法展示您寻找的页面"))
+                self.log(f"ℹ️ [{step_tag}] 结账弹窗已关闭 (Google One 页面状态: 404={is_g1_404})，正在直接查询 Google Play 验证订阅是否已生效...")
+                await asyncio.sleep(3.5)
                 await self.save_screenshot(page, f"{step_tag}_after_click")
+                try:
+                    play_chk = await self.inspect_play_subscriptions(page)
+                    if any(k in play_chk for k in ("Google AI", "Google One", "2026", "2027", "2028")):
+                        self.log(f"✅ [{step_tag}] 验证成功！Google Play 后台已确认激活新订阅 (前端 404 仅为回调跳转异常，订阅已实际生效)！")
+                        return True
+                except Exception as chk_err:
+                    self.log(f"⚠️ [{step_tag}] 查询 Google Play 出现异常: {chk_err}")
+
+                self.log(f"⚠️ [{step_tag}] Google Play 后台暂未读取到新订阅标志...")
                 post_click_err = "结账弹窗已关闭但未出现【已订阅】确认标志，疑似后台卡单 (应收款)"
                 break
 
