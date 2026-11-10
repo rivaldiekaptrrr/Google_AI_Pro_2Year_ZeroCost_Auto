@@ -859,48 +859,94 @@ class GoogleUltraAutomator:
                             await asyncio.sleep(3.5)
                             break
 
-            if "Google Authenticator" in body or "身份验证器" in body:
-                if has_totp_secret:
-                    totp_vis = page_obj.locator('input[type="tel"], input#totpPin, input[name="totpPin"]')
-                    if await totp_vis.count() == 0 or not await totp_vis.first.is_visible():
+            # 1. Biometric Screen Lock / Passkey challenge (e.g. fingerprint, face, or screen lock)
+            # Never click '继续' (Continue) as it triggers OS-level Windows Hello dialog which hangs automation.
+            # Always click '试试其他方式' (Try another way) to reveal alternative methods like phone push or authenticator.
+            is_screen_lock = any(k in body for k in (
+                "使用您的指纹、面孔或屏锁设置",
+                "指纹、面孔或屏锁",
+                "fingerprint, face, or screen lock",
+                "扫描二维码才能使用屏锁设置",
+                "使用您的通行密钥",
+            )) or "challenge/pk" in page_obj.url
+            if is_screen_lock and "challenge/totp" not in page_obj.url:
+                try_other = page_obj.locator("text=/试试其他方式|尝试其他方式|Try another way|Coba cara lain/i").first
+                if await try_other.count() > 0 and await try_other.is_visible():
+                    self.log("🔄 [Bypass Passkey] Terdeteksi tantangan kunci layar/sidik jari (Passkey). Mengklik '试试其他方式' (Coba cara lain)...")
+                    try:
+                        await try_other.click(timeout=4000)
+                    except Exception:
+                        pass
+                    await asyncio.sleep(3.5)
+                    continue
+
+            # 2. Check if Google Authenticator is directly available or listed on screen
+            if ("Google Authenticator" in body or "身份验证器" in body) and has_totp_secret:
+                totp_vis = page_obj.locator('input[type="tel"], input#totpPin, input[name="totpPin"]')
+                if await totp_vis.count() == 0 or not await totp_vis.first.is_visible():
+                    opt = page_obj.locator("text=/Google Authenticator|身份验证器/i").first
+                    if await opt.count() > 0 and await opt.is_visible():
+                        self.log("🖱️ [Pilih Opsi 2FA] Memilih verifikasi via 'Google Authenticator'...")
+                        await opt.click(force=True)
+                        await asyncio.sleep(3.5)
+                        continue
+
+            # 3. Two-step verification selection screen or prompt screens (challenge/dp, az, selection, etc.)
+            is_selection_or_challenge = (
+                "challenge/dp" in page_obj.url or
+                "challenge/az" in page_obj.url or
+                "challenge/selection" in page_obj.url or
+                "challenge/sk" in page_obj.url or
+                "扫描二维码" in body or
+                "选择您想要使用的登录方式" in body or
+                "两步验证" in body or
+                "验证身份" in body
+            ) and "challenge/totp" not in page_obj.url
+
+            if is_selection_or_challenge:
+                totp_vis = page_obj.locator('input[type="tel"], input#totpPin, input[name="totpPin"]')
+                is_totp_input_ready = (await totp_vis.count() > 0 and await totp_vis.first.is_visible())
+
+                if not is_totp_input_ready:
+                    # Check for Google Authenticator option first if has_totp_secret
+                    if has_totp_secret and ("Google Authenticator" in body or "身份验证器" in body):
                         opt = page_obj.locator("text=/Google Authenticator|身份验证器/i").first
                         if await opt.count() > 0 and await opt.is_visible():
-                            self.log("🖱️ [Pilih Opsi 2FA] Memilih verifikasi via 'Google Authenticator'...")
+                            self.log("🖱️ [Pilih Opsi 2FA] Memilih opsi 'Google Authenticator'...")
                             await opt.click(force=True)
                             await asyncio.sleep(3.5)
                             continue
-            elif ("challenge/dp" in page_obj.url or "challenge/az" in page_obj.url or "challenge/pk" in page_obj.url or "challenge/selection" in page_obj.url or "challenge/sk" in page_obj.url or "扫描二维码" in body or "选择您想要使用的登录方式" in body or "验证身份" in body) and "challenge/totp" not in page_obj.url:
-                if has_totp_secret:
-                    totp_vis = page_obj.locator('input[type="tel"], input#totpPin, input[name="totpPin"]')
-                    if await totp_vis.count() == 0 or not await totp_vis.first.is_visible():
-                        try_other = page_obj.locator("text=/试试其他方式|尝试其他方式|Try another way|Coba cara lain/i").first
-                        if await try_other.count() > 0 and await try_other.is_visible():
-                            self.log("🔄 [Ganti Metode 2FA] Mengklik '试试其他方式' (Coba cara lain) untuk beralih ke Google Authenticator...")
-                            try:
-                                await try_other.click(timeout=4000)
-                            except Exception:
-                                pass
-                            await asyncio.sleep(3.5)
-                            continue
-                else:
-                    # If Google Authenticator is absent, check if there is a phone push option to click
-                    if "点按手机或平板电脑上的“是”" in body or "Tap Yes on your phone" in body or "Ketuk Ya di ponsel" in body:
-                        dp_opt = page_obj.locator('text=/点按手机或平板电脑上的“是”|Tap Yes on your phone|Ketuk Ya di ponsel/i').first
-                        if await dp_opt.count() > 0 and await dp_opt.is_visible():
-                            self.log("📱 [Klik Opsi HP] Mengklik opsi '点按手机或平板电脑上的“是”' (Ketuk Ya di HP) untuk mengirim notifikasi...")
-                            try:
-                                await dp_opt.click(force=True)
-                            except Exception:
-                                pass
-                            await asyncio.sleep(3.0)
 
-                    self.log("📱 [Menunggu Konfirmasi HP] Terdeteksi verifikasi perangkat (challenge/dp). Silakan buka HP Anda dan ketuk 'Ya' / setujui login (menunggu hingga 30 detik)...")
-                    for _w in range(30):
-                        await asyncio.sleep(1.0)
-                        if "challenge/dp" not in page_obj.url and "challenge/az" not in page_obj.url and "challenge/pk" not in page_obj.url:
-                            self.log("✅ Konfirmasi di HP berhasil diterima, melanjutkan proses...")
-                            break
-                    continue
+                    # Check for Phone prompt option: "点按手机或平板电脑上的“是”"
+                    dp_opt = page_obj.locator('text=/点按手机或平板电脑上的|Tap Yes on your phone|Ketuk Ya di ponsel/i').first
+                    if await dp_opt.count() > 0 and await dp_opt.is_visible():
+                        self.log("📱 [Klik Opsi HP] Terdeteksi opsi '点按手机或平板电脑上的“是”' (Ketuk Ya di HP), mengklik untuk mengirim notifikasi push...")
+                        try:
+                            await dp_opt.click(force=True)
+                        except Exception:
+                            pass
+                        await asyncio.sleep(3.0)
+
+                    # Check for "Try another way" if we still need to find another option
+                    try_other = page_obj.locator("text=/试试其他方式|尝试其他方式|Try another way|Coba cara lain/i").first
+                    if await try_other.count() > 0 and await try_other.is_visible():
+                        self.log("🔄 [Ganti Metode 2FA] Mengklik '试试其他方式' (Coba cara lain)...")
+                        try:
+                            await try_other.click(timeout=4000)
+                        except Exception:
+                            pass
+                        await asyncio.sleep(3.5)
+                        continue
+
+                    # If on challenge/dp or waiting for phone confirmation:
+                    if "challenge/dp" in page_obj.url or "challenge/az" in page_obj.url or "点按" in body:
+                        self.log("📱 [Menunggu Konfirmasi HP] Notifikasi telah dikirim ke perangkat Anda. Silakan buka HP Anda dan ketuk 'Ya' / setujui login (menunggu hingga 35 detik)...")
+                        for _w in range(35):
+                            await asyncio.sleep(1.0)
+                            if "challenge/dp" not in page_obj.url and "challenge/az" not in page_obj.url and "challenge/pk" not in page_obj.url:
+                                self.log("✅ Konfirmasi di HP berhasil diterima, melanjutkan proses...")
+                                break
+                        continue
 
             if "确认您的辅助邮箱" in body or "Confirm your recovery email" in body:
                 rec_email = (self.account.get("recovery_email") or "").strip()
@@ -1461,6 +1507,9 @@ class GoogleUltraAutomator:
                             const btn = btns[btns.length - 1];
                             btn.scrollIntoView({block: 'center'});
                             const r = btn.getBoundingClientRect();
+                            ['mousedown', 'mouseup', 'click'].forEach(evt => {
+                                btn.dispatchEvent(new MouseEvent(evt, {bubbles: true, cancelable: true, view: window}));
+                            });
                             btn.click();
                             return {x: r.left + r.width / 2, y: r.top + r.height / 2, text: (btn.innerText || '').trim()};
                         }
@@ -1475,11 +1524,15 @@ class GoogleUltraAutomator:
                     continue
 
                 if fb_btn:
+                    try:
+                        await page.mouse.click(fb_btn["x"], fb_btn["y"])
+                    except Exception:
+                        pass
                     self.log(f"🖱️ [{step_tag}] [Klik] Berhasil mengklik tombol paket:【{fb_btn.get('text', '')}】，menunggu modal checkout...")
                     break
 
             if fb_btn:
-                target_fr, clean_txt = await self._poll_eacquire_modal(page, max_loops=60, step_tag=step_tag)
+                target_fr, clean_txt = await self._poll_eacquire_modal(page, max_loops=25, step_tag=step_tag)
                 if clean_txt == "INLINE_CARD_SAVED_RETRY":
                     self.log(f"[{step_tag}] 内联绑卡已完成，正在重新打开方案页拉起 0 元结账弹窗...")
                     continue
