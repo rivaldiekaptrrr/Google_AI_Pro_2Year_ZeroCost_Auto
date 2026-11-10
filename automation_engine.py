@@ -602,6 +602,38 @@ class GoogleUltraAutomator:
                 await asyncio.sleep(4.5)
                 continue
 
+            if any(k in body for k in ("更快登录", "通行密钥", "创建通行密钥", "Faster sign-in", "Simplify your sign-in", "Create a passkey", "Login lebih cepat", "Kunci sandi")) or "passkey" in page_obj.url:
+                self.log("检测到 Google 通行密钥 (Passkey / 更快登录) 提示页，正在自动点击【以后再说/Not now】跳过...")
+                skip_btn = page_obj.locator(
+                    'button:has-text("以后再说"), [role="button"]:has-text("以后再说"), a:has-text("以后再说"), '
+                    'button:has-text("Not now"), [role="button"]:has-text("Not now"), a:has-text("Not now"), '
+                    'button:has-text("Nanti saja"), [role="button"]:has-text("Nanti saja"), '
+                    'button:has-text("Skip"), [role="button"]:has-text("Skip"), '
+                    'button:has-text("跳过"), [role="button"]:has-text("跳过")'
+                ).first
+                if await skip_btn.count() > 0:
+                    try:
+                        await skip_btn.click(timeout=3000)
+                    except Exception:
+                        try:
+                            await skip_btn.click(force=True, timeout=3000)
+                        except Exception:
+                            pass
+                await page_obj.evaluate(
+                    """() => {
+                    const els = Array.from(document.querySelectorAll('button, a, [role="button"], span, div'));
+                    for (const el of els) {
+                        const t = (el.innerText || '').trim();
+                        if (['以后再说', 'Not now', 'Nanti saja', 'Skip', '跳过', '取消', 'Cancel'].includes(t)) {
+                            el.click();
+                            break;
+                        }
+                    }
+                }"""
+                )
+                await asyncio.sleep(4.0)
+                continue
+
             if "confirmidentifier" in page_obj.url:
                 self.log("检测到 confirmidentifier 页面，正在点击【下一步/Next】...")
                 nxt_btn = page_obj.locator('#identifierNext button, button:has-text("下一步"), button:has-text("Next"), #identifierNext').first
@@ -934,7 +966,7 @@ class GoogleUltraAutomator:
                 if "one.google.com" in page.url and "gds.google.com" not in page.url:
                     break
                 btn = page.locator(
-                    'button:has-text("Not now"), button:has-text("Skip"), button:has-text("以后再说"), button:has-text("跳过"), button:has-text("取消"), button:has-text("Cancel"), button:has-text("我同意"), button:has-text("继续")'
+                    'button:has-text("Not now"), [role="button"]:has-text("Not now"), button:has-text("以后再说"), [role="button"]:has-text("以后再说"), button:has-text("Nanti saja"), [role="button"]:has-text("Nanti saja"), button:has-text("Skip"), [role="button"]:has-text("Skip"), button:has-text("跳过"), button:has-text("取消"), button:has-text("Cancel"), button:has-text("我同意")'
                 )
                 if await btn.count() > 0 and await btn.first.is_visible():
                     await btn.first.click(force=True)
