@@ -1626,29 +1626,59 @@ class GoogleUltraAutomator:
                     try:
                         ft_after = f2_txt
                         clean_after = " | ".join([l.strip() for l in ft_after.splitlines() if l.strip()])
-                        if any(
-                            ok_kw in clean_after
-                            for ok_kw in (
-                                "已订阅",
-                                "Subscribed",
-                                "感谢您订阅",
-                                "通过此类购买活动获取",
-                                "Google Play 积分",
-                                "Play Points",
-                                "Earn Google Play Points",
-                                "开启备用付款方式",
-                                "添加备用付款方式",
-                                "备用付款方式",
-                                "Backup payment",
-                                "以后再说",
-                                "知道了",
-                                "Got it",
-                            )
-                        ):
+
+                        # 1. ALWAYS check ERROR keywords FIRST!
+                        err_keywords = [
+                            "出了点问题",
+                            "无法完成",
+                            "拒绝了您的付款",
+                            "付款遭拒",
+                            "支付遭拒",
+                            "发卡机构",
+                            "由于资金不足",
+                            "资金不足",
+                            "[OR-",
+                            "[OR_",
+                            "OR_FGVEM",
+                            "OR-PFGVEM",
+                            "[BX-CPL-05]",
+                            "您的订单仍在处理中",
+                            "订单处理完成后",
+                            "购买失败",
+                            "目前无法完成结账",
+                            "Something went wrong",
+                            "couldn't be completed",
+                            "Check that you have the correct country",
+                            "declined",
+                            "insufficient funds",
+                            "card issuer declined",
+                        ]
+                        if any(err_kw in clean_after for err_kw in err_keywords):
+                            err_lines = [line.strip() for line in ft_after.splitlines() if any(err_kw in line for err_kw in err_keywords)]
+                            post_click_err = " | ".join(err_lines) if err_lines else clean_after[:300]
+                            break
+
+                        # 2. Check OK keywords ONLY when no error keywords are present
+                        # NOTE: NEVER include "知道了" or "Got it" here as they appear on error/decline dialogs!
+                        ok_keywords = (
+                            "已订阅",
+                            "Subscribed",
+                            "感谢您订阅",
+                            "通过此类购买活动获取",
+                            "Google Play 积分",
+                            "Play Points",
+                            "Earn Google Play Points",
+                            "开启备用付款方式",
+                            "添加备用付款方式",
+                            "备用付款方式",
+                            "Backup payment",
+                            "以后再说",
+                        )
+                        if any(ok_kw in clean_after for ok_kw in ok_keywords):
                             self.log(f"✅ [{step_tag}] 检测到订阅成功确认提示！")
                             await self.save_screenshot(page, f"{step_tag}_after_click")
                             try:
-                                dismiss_btn = f2.locator('button:has-text("以后再说"), [role="button"]:has-text("以后再说"), button:has-text("Not now"), [role="button"]:has-text("Not now"), button:has-text("不用了"), button:has-text("知道了")').first
+                                dismiss_btn = f2.locator('button:has-text("以后再说"), [role="button"]:has-text("以后再说"), button:has-text("Not now"), [role="button"]:has-text("Not now"), button:has-text("不用了")').first
                                 if await dismiss_btn.count() > 0 and await dismiss_btn.is_visible():
                                     self.log(f"[{step_tag}] 正在点击【以后再说】关闭弹窗以同步订单状态...")
                                     try:
@@ -1660,7 +1690,7 @@ class GoogleUltraAutomator:
                                         const els = Array.from(document.querySelectorAll('button, [role="button"], span, div'));
                                         const b = els.find(e => {
                                             const t = (e.innerText || '').trim();
-                                            return t === '以后再说' || t === 'Not now' || t === '不用了' || t === '知道了';
+                                            return t === '以后再说' || t === 'Not now' || t === '不用了';
                                         });
                                         if (b) {
                                             b.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, cancelable: true}));
@@ -1676,43 +1706,35 @@ class GoogleUltraAutomator:
                             except Exception:
                                 await asyncio.sleep(4.0)
                             return True
-                        err_keywords = [
-                            "出了点问题",
-                            "无法完成",
-                            "拒绝了您的付款",
-                            "付款遭拒",
-                            "支付遭拒",
-                            "由于资金不足",
-                            "[OR-",
-                            "[OR_",
-                            "OR_FGVEM",
-                            "[BX-CPL-05]",
-                            "您的订单仍在处理中",
-                            "订单处理完成后",
-                            "购买失败",
-                            "Something went wrong",
-                            "couldn't be completed",
-                            "Check that you have the correct country",
-                            "declined",
-                            "insufficient funds",
-                        ]
-                        if any(err_kw in clean_after for err_kw in err_keywords):
-                            err_lines = [line.strip() for line in ft_after.splitlines() if any(err_kw in line for err_kw in err_keywords)]
-                            post_click_err = " | ".join(err_lines) if err_lines else clean_after[:300]
-                            break
                     except Exception:
                         pass
             if post_click_err:
                 break
             if wait_i >= 3 and not eacquire_present and not reauth_spinning:
-                # Check main page for "购买失败" toast or "欢迎您！您的新会员已生效" before assuming modal closure result
+                # Check main page for error alerts/toasts or "欢迎您！您的新会员已生效" before assuming modal closure result
                 try:
                     main_body_txt = (await page.main_frame.inner_text("body", timeout=2000)).strip()
                 except Exception:
                     main_body_txt = ""
-                if "购买失败" in main_body_txt or "Purchase failed" in main_body_txt or "出了点问题" in main_body_txt or "[BX-CPL-05]" in main_body_txt:
-                    post_click_err = "检测到页面左下角提示【购买失败。请重试。】或订单未完成结算 ([BX-CPL-05])"
+
+                main_err_keywords = [
+                    "购买失败", "Purchase failed", "出了点问题", "[BX-CPL-05]",
+                    "[OR-", "[OR_", "OR_FGVEM", "OR-PFGVEM", "拒绝了您的付款",
+                    "付款遭拒", "支付遭拒", "发卡机构", "资金不足", "目前无法完成结账",
+                    "couldn't be completed", "declined"
+                ]
+                if any(k in main_body_txt for k in main_err_keywords):
+                    err_lines = [line.strip() for line in main_body_txt.splitlines() if any(k in line for k in main_err_keywords)]
+                    post_click_err = " | ".join(err_lines) if err_lines else "主页面检测到发卡行拒绝付款或结账错误"
+                    # Dismiss error dialog if there is a '知道了' or '确定' button
+                    try:
+                        ok_btn = page.locator('button:has-text("知道了"), [role="button"]:has-text("知道了"), button:has-text("确定"), [role="button"]:has-text("确定")').first
+                        if await ok_btn.count() > 0 and await ok_btn.is_visible():
+                            await ok_btn.click(force=True)
+                    except Exception:
+                        pass
                     break
+
                 if "欢迎您" in main_body_txt or "新会员已生效" in main_body_txt or "Welcome" in main_body_txt:
                     self.log(f"✅ [{step_tag}] 检测到 Google One 新会员已生效欢迎页，订阅成功！")
                     await self.save_screenshot(page, f"{step_tag}_after_click")
@@ -1965,14 +1987,25 @@ class GoogleUltraAutomator:
         exp_str = m_date.group(1) if m_date else ("2028年 (已锁死2年权益)" if "2028" in final_txt else "已激活 (详见截图)")
         plan_found = "Google AI Pro (5 TB)" if "5 TB" in final_txt else ("Google AI Ultra (20 TB)" if "20 TB" in final_txt else ("Google AI Ultra (30 TB)" if "30 TB" in final_txt else "Google AI Pro"))
 
+        is_2028 = "2028" in exp_str or "2028" in final_txt
+        if is_2028:
+            status_str = "completed"
+            step_msg = f"✅ 零成本两年完成！套餐: {plan_found} | 到期日: {exp_str}"
+        elif "2027" in exp_str or "2027" in final_txt:
+            status_str = "warning"
+            step_msg = f"⚠️ 仅完成首年12个月免费 (未达2028)！套餐: {plan_found} | 到期日: {exp_str} (Step 3/4 需查卡/重跑)"
+        else:
+            status_str = "completed"
+            step_msg = f"✅ 流程完成！套餐: {plan_found} | 到期日: {exp_str}"
+
         self.update_state(
-            status="completed",
+            status=status_str,
             current_step=5,
-            step_message=f"✅ 零成本两年完成！套餐: {plan_found} | 到期日: {exp_str}",
+            step_message=step_msg,
             expiry_date=exp_str,
             last_screenshot=final_shot,
         )
-        self.log(f"🎉 账号 {self.account['email']} 零成本两年 Pro 全流程执行完毕！套餐: {plan_found}，到期时间: {exp_str}")
+        self.log(f"🎉 账号 {self.account['email']} 流程执行完毕！{step_msg}")
 
     # Keep step7_cancel_and_verify alias for compatibility
     step7_cancel_and_verify = step5_cancel_and_verify
@@ -2088,13 +2121,25 @@ class GoogleUltraAutomator:
                     self.check_stop()
                     if step_num < start_step:
                         continue
-                    await step_fn()
+                    try:
+                        await step_fn()
+                    except Exception as step_err:
+                        # Auto-protect: if Step 2 succeeded and Step 3 or 4 fails, automatically run Step 5 to cancel auto-renewal so the user is never charged!
+                        if step_num in (3, 4):
+                            self.log(f"⚠️ 步骤 {step_num} 叠加未成功: {step_err}")
+                            self.log(f"🛡️ 触发安全保护机制：正在自动取消续订以锁定已激活的免费期并防止到期扣费...")
+                            try:
+                                await self.step5_cancel_and_verify(page)
+                            except Exception as c_err:
+                                self.log(f"取消续订异常: {c_err}")
+                        raise step_err
 
                 await browser.close()
         except Exception as e:
             err_msg = str(e)
             self.log(f"❌ 执行中断: {err_msg}")
-            self.update_state(status="error", step_message=f"❌ 步骤 {self.account.get('current_step', 1)} 异常: {err_msg[:120]}")
+            if self.account.get("status") != "warning":
+                self.update_state(status="error", step_message=f"❌ 步骤 {self.account.get('current_step', 1)} 异常: {err_msg[:120]}")
         finally:
             if self.proxy_bridge:
                 await self.proxy_bridge.stop()

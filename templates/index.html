@@ -283,6 +283,11 @@
       color: #34d399;
       border: 1px solid rgba(16, 185, 129, 0.35);
     }
+    .status-warning {
+      background: rgba(245, 158, 11, 0.2);
+      color: #fbbf24;
+      border: 1px solid rgba(245, 158, 11, 0.35);
+    }
     .status-error {
       background: rgba(239, 68, 68, 0.2);
       color: #f87171;
@@ -607,6 +612,7 @@
         running: ['status-running', '⚡ 执行中'],
         waiting_human: ['status-waiting_human', '🖐️ 等点人机验证'],
         completed: ['status-completed', '✅ 已完成'],
+        warning: ['status-warning', '⚠️ 仅1年(部分)'],
         error: ['status-error', '❌ 异常中断'],
         stopped: ['status-pending', '⏹ 已停止']
       };
@@ -618,7 +624,12 @@
       let html = '<div class="step-dots">';
       for (let s = 1; s <= 5; s++) {
         let cls = '';
-        if (status === 'completed' || s < curStep) cls = 'done';
+        if (status === 'completed') cls = 'done';
+        else if (status === 'warning') {
+          // If warning (1-year completed), steps 1, 2, and 5 (canceled renewal) were done
+          cls = (s === 1 || s === 2 || s === 5) ? 'done' : '';
+        }
+        else if (s < curStep) cls = 'done';
         else if (s === curStep && (status === 'running' || status === 'waiting_human')) cls = 'active';
         html += `<div class="step-dot ${cls}" title="Step ${s}">${s}</div>`;
       }
