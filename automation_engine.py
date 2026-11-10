@@ -1755,9 +1755,25 @@ class GoogleUltraAutomator:
         }
         ok = await self.open_and_click_subscribe(page, cfg_l2, "step3_layer2_6mss")
         if not ok:
-            self.log("⚠️ Step 3 首次触发未完成结账，正在等待 3 秒后进行重试 (2/2)...")
-            await asyncio.sleep(3.0)
-            ok = await self.open_and_click_subscribe(page, cfg_l2, "step3_layer2_6mss")
+            self.log("⚠️ Step 3 首次结账未直接确认，等待 12 秒核验 Google Play 实际订阅状态...")
+            await asyncio.sleep(12.0)
+            check_txt = await self.inspect_play_subscriptions(page)
+            if any(k in check_txt for k in ("2028年4月", "2028年5月", "2028年6月", "2028年10月", "2028年11月", "2028年12月", "Apr 2028", "May 2028", "Oct 2028", "Nov 2028", "Dec 2028")):
+                self.log("✅ 经后台核验：Step 3 实际上已成功入账 (到期日已顺延至 2028 年)，无需重试！")
+                ok = True
+            else:
+                self.log("⚠️ 后台尚未生效，冷却 15 秒消除 Google Play 订单排队锁，准备进行重试 (2/2)...")
+                await asyncio.sleep(15.0)
+                sub_id_fresh = await self.get_current_sub_id(page)
+                if sub_id_fresh:
+                    cfg_l2["ear8"] = [None, 5, None, None, None, [sub_id_fresh]]
+                ok = await self.open_and_click_subscribe(page, cfg_l2, "step3_layer2_6mss")
+                if not ok:
+                    await asyncio.sleep(10.0)
+                    check_txt2 = await self.inspect_play_subscriptions(page)
+                    if any(k in check_txt2 for k in ("2028年4月", "2028年5月", "2028年6月", "2028年10月", "2028年11月", "2028年12月", "Apr 2028", "May 2028", "Oct 2028", "Nov 2028", "Dec 2028")):
+                        self.log("✅ 最终核验通过：Step 3 权益已生效！")
+                        ok = True
         if not ok:
             raise RuntimeError(f"Step 3 (二层 6个月免费叠加 US$0.00) 未成功: {self.last_subscribe_error}")
         self.log("✅ Step 3 (二层 6个月免费包 US$0.00 -> 18个月) 叠加完成！等待 45 秒同步订阅 ID...")
@@ -1790,7 +1806,18 @@ class GoogleUltraAutomator:
             ok = await self.open_and_click_subscribe(page, cfg_l3, tag)
             if ok:
                 break
-            await asyncio.sleep(3.0)
+            self.log(f"⚠️ [{tag}] 首次结账未直接确认，等待 12 秒核验 Google Play 实际到期日...")
+            await asyncio.sleep(12.0)
+            check_l3 = await self.inspect_play_subscriptions(page)
+            if any(k in check_l3 for k in ("2028年10月", "2028年11月", "2028年12月", "Oct 2028", "Nov 2028", "Dec 2028")):
+                self.log("✅ 经后台核验：Step 4 实际上已生效满 24 个月封顶 (2028年10-12月)，无需重试！")
+                ok = True
+                break
+            self.log(f"⚠️ 冷却 15 秒消除 Google Play 订单排队锁，准备尝试备用 Token 方案...")
+            await asyncio.sleep(15.0)
+            sub_id_fresh = await self.get_current_sub_id(page)
+            if sub_id_fresh:
+                sub_id = sub_id_fresh
 
         if not ok:
             raise RuntimeError(f"Step 4 (三层 6个月免费封顶 US$0.00) 未成功: {self.last_subscribe_error}")
