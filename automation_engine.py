@@ -570,7 +570,9 @@ class GoogleUltraAutomator:
         password = self.account.get("password", "")
         pwd_submitted = False
         has_totp_secret = bool((self.account.get("totp_secret") or "").strip())
-        for _ in range(16):
+        last_screen_info = ""
+
+        for loop_idx in range(25):
             self.check_stop()
             if page_obj.is_closed():
                 return
@@ -580,8 +582,35 @@ class GoogleUltraAutomator:
                 await asyncio.sleep(1.5)
                 continue
 
+            # Extract screen heading/title to write live debug info to terminal
+            h_text = ""
+            try:
+                h_el = page_obj.locator('h1, #headingText, [role="heading"]').first
+                if await h_el.count() > 0 and await h_el.is_visible():
+                    h_text = (await h_el.inner_text()).strip()
+            except Exception:
+                pass
+
+            curr_screen = f"{page_obj.url.split('?')[0]} | {h_text}"
+            if curr_screen != last_screen_info and h_text:
+                self.log(f"🖥️ [Layar Terdeteksi] Judul: '{h_text}' | Halaman: {page_obj.url.split('?')[0]}")
+                last_screen_info = curr_screen
+
+            # Print list of available sign-in options if on a selection screen
+            if any(k in body for k in ("选择您想要使用的登录方式", "Choose how you want to sign in", "Pilih cara Anda ingin masuk")):
+                try:
+                    opts = await page_obj.locator('div[role="link"], div[role="button"], li, span').evaluate_all(
+                        """(elements) => elements.map(e => (e.innerText || '').trim())
+                           .filter(t => t.length > 3 && t.length < 60 && !t.includes('\\n'))"""
+                    )
+                    unique_opts = list(dict.fromkeys(opts))[:5]
+                    if unique_opts:
+                        self.log(f"📋 [Opsi di Layar]: {' | '.join(unique_opts)}")
+                except Exception:
+                    pass
+
             if "gds.google.com" in page_obj.url or "recoveryoptions" in page_obj.url or "确保您始终都能登录" in body:
-                self.log("检测到 gds.google.com 辅助信息提示页，正在点击【取消/跳过】完成登录跳转...")
+                self.log("⏭️ [Bypass] Terdeteksi popup Info Keamanan (gds.google.com), mengklik【取消/跳过】...")
                 cancel_btn = page_obj.locator('button:has-text("取消"), button:has-text("Cancel"), button:has-text("跳过"), button:has-text("Skip"), [role="button"]:has-text("取消"), [role="button"]:has-text("Cancel"), [role="button"]:has-text("跳过"), [role="button"]:has-text("Skip"), button:has-text("以后再说"), button:has-text("Not now")').first
                 if await cancel_btn.count() > 0:
                     try:
@@ -603,7 +632,7 @@ class GoogleUltraAutomator:
                 continue
 
             if any(k in body for k in ("更快登录", "通行密钥", "创建通行密钥", "Faster sign-in", "Simplify your sign-in", "Create a passkey", "Login lebih cepat", "Kunci sandi")) or "passkey" in page_obj.url:
-                self.log("检测到 Google 通行密钥 (Passkey / 更快登录) 提示页，正在自动点击【以后再说/Not now】跳过...")
+                self.log("⏭️ [Bypass] Terdeteksi popup Passkey ('更快登录 / Create a passkey'), mengklik【以后再说/Not now】...")
                 skip_btn = page_obj.locator(
                     'button:has-text("以后再说"), [role="button"]:has-text("以后再说"), a:has-text("以后再说"), '
                     'button:has-text("Not now"), [role="button"]:has-text("Not now"), a:has-text("Not now"), '
@@ -635,7 +664,7 @@ class GoogleUltraAutomator:
                 continue
 
             if any(k in body for k in ("添加个人资料照片", "个人资料照片", "Add a profile picture", "Profile picture", "Tambahkan foto profil", "Foto profil")) or "profilepicture" in page_obj.url:
-                self.log("检测到 Google 添加个人资料照片提示页，正在自动点击【跳过/Skip】...")
+                self.log("⏭️ [Bypass] Terdeteksi popup Tambah Foto Profil ('添加个人资料照片'), mengklik【跳过/Skip】...")
                 skip_btn = page_obj.locator(
                     'button:has-text("跳过"), [role="button"]:has-text("跳过"), a:has-text("跳过"), span:has-text("跳过"), '
                     'button:has-text("Skip"), [role="button"]:has-text("Skip"), a:has-text("Skip"), '
@@ -666,8 +695,8 @@ class GoogleUltraAutomator:
                 await asyncio.sleep(4.0)
                 continue
 
-            if "confirmidentifier" in page_obj.url:
-                self.log("检测到 confirmidentifier 页面，正在点击【下一步/Next】...")
+            if "confirmidentifier" in page_obj.url or "选择账号" in body or "Choose an account" in body:
+                self.log("🖱️ [Klik] Terdeteksi layar confirmidentifier, mengklik tombol【下一步/Next】...")
                 nxt_btn = page_obj.locator('#identifierNext button, button:has-text("下一步"), button:has-text("Next"), #identifierNext').first
                 if await nxt_btn.count() > 0:
                     try:
@@ -700,7 +729,7 @@ class GoogleUltraAutomator:
                     except Exception:
                         cur_em = ""
                     if cur_em == email or cur_em.replace(".", "") == email.replace(".", ""):
-                        self.log(f"邮箱已在输入框中，等待 Google 页面跳转加载...")
+                        self.log(f"📝 [Input] Email sudah terisi ({cur_em}), menekan tombol '下一步/Next'...")
                         nxt = page_obj.locator('#identifierNext, button:has-text("下一步"), button:has-text("Next")').first
                         if await nxt.count() > 0 and await nxt.is_visible():
                             try:
@@ -710,7 +739,7 @@ class GoogleUltraAutomator:
                         await asyncio.sleep(2.5)
                         continue
                     else:
-                        self.log(f"检测到登录邮箱输入框，正在填入邮箱并点击下一步: {email}")
+                        self.log(f"📝 [Input] Mengetik email ke kolom login: {email} -> Klik '下一步/Next'")
                         await email_inp.first.click(force=True)
                         await asyncio.sleep(0.2)
                         await email_inp.first.press("Control+A")
@@ -735,7 +764,7 @@ class GoogleUltraAutomator:
             if "Verify it's you" in body or "验证您的身份" in body:
                 btn = page_obj.locator('button:has-text("Verify it\'s you"), button:has-text("验证您的身份"), div[role="button"]:has-text("验证您的身份"), div[role="button"]:has-text("Verify it\'s you")').first
                 if await btn.count() > 0 and await btn.is_visible():
-                    self.log("检测到安全验证按钮，正在点击【验证您的身份】...")
+                    self.log("🛡️ [Klik] Terdeteksi tombol verifikasi keamanan, mengklik【验证您的身份 / Verify it's you】...")
                     await btn.click()
                     await asyncio.sleep(4)
                     continue
@@ -744,7 +773,7 @@ class GoogleUltraAutomator:
             if any(k in body for k in ("请输入您印象中最后一次登录", "最后一次使用的密码", "Enter the last password you remember", "Masukkan sandi terakhir")) or "recovery" in page_obj.url:
                 rec_pwd = page_obj.locator('input[type="password"], input[name="password"], input[name="Passwd"]')
                 if await rec_pwd.count() > 0 and await rec_pwd.first.is_visible():
-                    self.log("检测到 Google 账号恢复/验证提示（请输入最后一次使用的密码），正在自动填入密码并点击下一步...")
+                    self.log(f"🔑 [Input] Terdeteksi Akun Pemulihan (Masukkan sandi terakhir), mengetik password ({len(password)} char) -> Klik '下一步'...")
                     try:
                         await rec_pwd.first.click(force=True)
                         await asyncio.sleep(0.2)
@@ -767,11 +796,11 @@ class GoogleUltraAutomator:
             pwd = page_obj.locator('input[type="password"], input[name="Passwd"]')
             if await pwd.count() > 0 and await pwd.first.is_visible():
                 if pwd_submitted:
-                    self.log("Google 正在验证密码中，等待页面响应...")
+                    self.log("⏳ Google sedang memverifikasi password, menunggu respon halaman...")
                     await asyncio.sleep(2.5)
                     continue
 
-                self.log("正在自动输入密码通过身份验证...")
+                self.log(f"🔑 [Input] Mengetik password ({len(password)} char) -> Klik '下一步/Next'")
                 try:
                     await pwd.first.click(force=True)
                     await asyncio.sleep(0.2)
@@ -796,7 +825,7 @@ class GoogleUltraAutomator:
                         break
                     err_loc = page_obj.locator("text=/密码有误|Wrong password|Try again|重新输入/i")
                     if await err_loc.count() > 0 and await err_loc.first.is_visible():
-                        self.log("⚠️ 检测到密码错误提示，准备重新处理...")
+                        self.log("⚠️ [Peringatan] Terdeteksi notifikasi kata sandi salah (Wrong password), mencoba memproses ulang...")
                         pwd_submitted = False
                         break
                 continue
@@ -807,7 +836,7 @@ class GoogleUltraAutomator:
                         try:
                             cb = fr.locator("#recaptcha-anchor")
                             if await cb.count() > 0:
-                                self.log("检测到登录人机验证框 (challenge/recaptcha)，正在自动勾选...")
+                                self.log("🤖 [CAPTCHA] Terdeteksi kotak verifikasi (reCAPTCHA), sedang mencentang otomatis...")
                                 await cb.click()
                                 await asyncio.sleep(4.5)
                                 break
@@ -825,7 +854,7 @@ class GoogleUltraAutomator:
                         dismiss_match = any(k in btxt for k in ("以后再说", "跳过", "取消", "不用了", "Not now", "Skip", "Cancel"))
                         totp_opt_match = any(k in btxt for k in ("Google Authenticator", "身份验证器"))
                         if dismiss_match or (totp_opt_match and has_totp_secret):
-                            self.log(f"检测到弹窗选项【{btxt}】，正在点击...")
+                            self.log(f"🖱️ [Klik Dialog] Terdeteksi opsi dialog【{btxt}】，sedang mengklik...")
                             await b.click(force=True)
                             await asyncio.sleep(3.5)
                             break
@@ -836,7 +865,7 @@ class GoogleUltraAutomator:
                     if await totp_vis.count() == 0 or not await totp_vis.first.is_visible():
                         opt = page_obj.locator("text=/Google Authenticator|身份验证器/i").first
                         if await opt.count() > 0 and await opt.is_visible():
-                            self.log("选择 Google 身份验证器验证方式...")
+                            self.log("🖱️ [Pilih Opsi 2FA] Memilih verifikasi via 'Google Authenticator'...")
                             await opt.click(force=True)
                             await asyncio.sleep(3.5)
                             continue
@@ -846,7 +875,7 @@ class GoogleUltraAutomator:
                     if await totp_vis.count() == 0 or not await totp_vis.first.is_visible():
                         try_other = page_obj.locator("text=/试试其他方式|尝试其他方式|Try another way|Coba cara lain/i").first
                         if await try_other.count() > 0 and await try_other.is_visible():
-                            self.log("检测到设备推送验证 (challenge/dp)，已配置 totp_secret，正在切换至 Google Authenticator 自动过 2FA...")
+                            self.log("🔄 [Ganti Metode 2FA] Mengklik '试试其他方式' (Coba cara lain) untuk beralih ke Google Authenticator...")
                             try:
                                 await try_other.click(timeout=4000)
                             except Exception:
@@ -854,11 +883,22 @@ class GoogleUltraAutomator:
                             await asyncio.sleep(3.5)
                             continue
                 else:
-                    self.log("📱 检测到设备/手机推送验证 (challenge/dp)，未配置 totp_secret，请在手机上点击确认数字/同意登录 (等待 30 秒)...")
+                    # If Google Authenticator is absent, check if there is a phone push option to click
+                    if "点按手机或平板电脑上的“是”" in body or "Tap Yes on your phone" in body or "Ketuk Ya di ponsel" in body:
+                        dp_opt = page_obj.locator('text=/点按手机或平板电脑上的“是”|Tap Yes on your phone|Ketuk Ya di ponsel/i').first
+                        if await dp_opt.count() > 0 and await dp_opt.is_visible():
+                            self.log("📱 [Klik Opsi HP] Mengklik opsi '点按手机或平板电脑上的“是”' (Ketuk Ya di HP) untuk mengirim notifikasi...")
+                            try:
+                                await dp_opt.click(force=True)
+                            except Exception:
+                                pass
+                            await asyncio.sleep(3.0)
+
+                    self.log("📱 [Menunggu Konfirmasi HP] Terdeteksi verifikasi perangkat (challenge/dp). Silakan buka HP Anda dan ketuk 'Ya' / setujui login (menunggu hingga 30 detik)...")
                     for _w in range(30):
                         await asyncio.sleep(1.0)
                         if "challenge/dp" not in page_obj.url and "challenge/az" not in page_obj.url and "challenge/pk" not in page_obj.url:
-                            self.log("✅ 手机端确认通过，继续执行...")
+                            self.log("✅ Konfirmasi di HP berhasil diterima, melanjutkan proses...")
                             break
                     continue
 
@@ -871,10 +911,10 @@ class GoogleUltraAutomator:
                     except Exception:
                         cur_kpe = ""
                     if cur_kpe == rec_email:
-                        self.log("辅助邮箱已填入，等待提交响应...")
+                        self.log(f"📧 [Input] Email pemulihan sudah terisi ({rec_email}), menunggu verifikasi...")
                         await asyncio.sleep(3.0)
                         continue
-                    self.log(f"正在自动填入辅助邮箱完成验证: {rec_email}")
+                    self.log(f"📧 [Input] Mengetik email pemulihan: {rec_email} -> Menekan Enter")
                     await kpe_inp.first.click(force=True)
                     await asyncio.sleep(0.2)
                     await kpe_inp.first.press("Control+A")
@@ -890,20 +930,20 @@ class GoogleUltraAutomator:
                     continue
                 opt = page_obj.locator("text=/确认您的辅助邮箱|Confirm your recovery email/i").first
                 if await opt.count() > 0 and await opt.is_visible():
-                    self.log("选择【确认您的辅助邮箱】验证方式...")
+                    self.log("🖱️ [Pilih Opsi] Memilih opsi【确认您的辅助邮箱 / Confirm recovery email】...")
                     await opt.click(force=True)
                     await asyncio.sleep(3.5)
                     continue
 
             if "Add 2-Step Verification" in body or "We couldn’t verify it’s you" in body or "We couldn't verify it's you" in body or "signin/rejected" in page_obj.url:
-                self.log("ℹ️ 检测到新设备安全拦截页 (Add 2-Step Verification / signin/rejected)，跳过独立验证页...")
+                self.log("ℹ️ [Info] Terdeteksi halaman keamanan akun (Add 2-Step Verification / signin/rejected), melewati verifikasi mandiri...")
                 return
 
             totp = page_obj.locator('input[type="tel"], input#totpPin, input[name="totpPin"]')
             if await totp.count() > 0 and await totp.first.is_visible():
                 code = await self.ensure_totp_fresh()
                 if code:
-                    self.log(f"正在自动填入 2FA 动态验证码: {code}")
+                    self.log(f"🔐 [2FA TOTP] Menghitung kode dinamis 6 digit: {code} -> Mengetik ke kolom totpPin -> Klik '下一步/Next'")
                     try:
                         await totp.first.fill(code)
                         next_btn = page_obj.locator('#totpNext, button:has-text("下一步"), button:has-text("Next")').first
@@ -916,7 +956,7 @@ class GoogleUltraAutomator:
                     await asyncio.sleep(5)
                     continue
                 else:
-                    self.log("⚠️ 页面需要 2FA 验证码，但当前账号未配置 totp_secret，请在浏览器中手动输入验证码...")
+                    self.log("⚠️ [Perlu Input Manual] Halaman membutuhkan kode 2FA 6 digit, namun akun ini belum memiliki totp_secret. Silakan ketik kode verifikasi langsung di jendela browser...")
                     for _w in range(30):
                         await asyncio.sleep(1.0)
                         if await totp.count() == 0 or not await totp.first.is_visible():
@@ -1373,11 +1413,11 @@ class GoogleUltraAutomator:
         for attempt_url in ("https://one.google.com/plans?hl=zh-CN",) * 5:
             if target_fr:
                 break
-            self.log(f"[{step_tag}] 正在打开方案页面触发 Ngbm 结账弹窗: {attempt_url}")
+            self.log(f"🌐 [{step_tag}] [Navigasi] Membuka halaman paket Google One: {attempt_url}")
             await self.safe_goto(page, attempt_url, timeout=40000)
             await asyncio.sleep(3.5)
             if "accounts.google.com" in page.url or "gds.google.com" in page.url:
-                self.log(f"[{step_tag}] 页面触发登录验证跳转，正在自动完成身份验证...")
+                self.log(f"🔐 [{step_tag}] Halaman memicu verifikasi keamanan, menyelesaikan autentikasi otomatis...")
                 await self.pass_reauth_on_page(page)
                 await self.safe_goto(page, attempt_url, timeout=40000)
                 await asyncio.sleep(3.5)
@@ -1430,12 +1470,12 @@ class GoogleUltraAutomator:
                 except Exception as eval_err:
                     err_msg = str(eval_err)
                     if "destroyed" in err_msg or "navigat" in err_msg:
-                        self.log(f"[{step_tag}] 页面正在重定向加载中，等待稳定后重试注入...")
+                        self.log(f"⏳ [{step_tag}] Halaman Google One sedang redirect, menunggu stabil sebelum memicu tombol...")
                         await asyncio.sleep(2.0)
                     continue
 
                 if fb_btn:
-                    self.log(f"[{step_tag}] 已点击【{fb_btn.get('text', '')}】触发按钮，等待 Google Play 结账弹窗...")
+                    self.log(f"🖱️ [{step_tag}] [Klik] Berhasil mengklik tombol paket:【{fb_btn.get('text', '')}】，menunggu modal checkout...")
                     break
 
             if fb_btn:
@@ -1500,7 +1540,7 @@ class GoogleUltraAutomator:
             try:
                 btxt = (await b.inner_text()).strip()
                 if btxt in ("订阅", "Subscribe"):
-                    self.log(f"--> 正在点击 [{step_tag}] 的【{btxt}】按钮...")
+                    self.log(f"💳 [{step_tag}] [Aksi Bayar] Mengklik tombol konfirmasi langganan:【{btxt}】(Gratis US$0.00)...")
                     await asyncio.sleep(1.5)
                     try:
                         await b.scroll_into_view_if_needed(timeout=3000)
@@ -1967,7 +2007,7 @@ class GoogleUltraAutomator:
             fcnt = await final_cbtn.count()
             for i in range(fcnt - 1, -1, -1):
                 if await final_cbtn.nth(i).is_visible():
-                    self.log("正在点击最终【取消订阅】确认按钮...")
+                    self.log("🖱️ [Klik] Mengonfirmasi tombol akhir【取消订阅 / Batal Langganan】agar tidak ada tagihan otomatis...")
                     await final_cbtn.nth(i).click(timeout=8000)
                     break
             await asyncio.sleep(4)
@@ -1980,7 +2020,7 @@ class GoogleUltraAutomator:
         await asyncio.sleep(3.5)
         final_shot = await self.save_screenshot(page, "step5_final_verified")
         final_txt = " | ".join([l.strip() for l in (await page.inner_text("body")).splitlines() if l.strip()])
-        self.log(f"最终 Play 订阅页状态: {final_txt[:400]}")
+        self.log(f"📄 [Teks Layar Google Play] Status langganan akhir: {final_txt[:300]}")
 
         # Parse expiry date from final_txt
         m_date = re.search(r"(?:取消日期[：:]\s*|续订日期[：:]\s*|将于\s*)([0-9]{4}年[0-9]{1,2}月[0-9]{1,2}日)", final_txt)
