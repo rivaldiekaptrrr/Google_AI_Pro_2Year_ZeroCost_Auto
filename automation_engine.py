@@ -952,15 +952,18 @@ class GoogleUltraAutomator:
                 body_txt = ""
 
             if "gds.google.com" in page.url or "recoveryoptions" in page.url or "homeaddress" in page.url or "profilepicture" in page.url or "确保您始终都能登录" in body_txt or "设置住址" in body_txt or "添加个人资料照片" in body_txt:
-                await page.evaluate(
-                    """() => {
-                    const els = Array.from(document.querySelectorAll('button, a, [role="button"], span'));
-                    for (const el of els) {
-                        const t = (el.innerText || '').trim();
-                        if (['取消', 'Cancel', '跳过', 'Skip', 'Lewati', '以后再说', 'Not now', 'Nanti saja'].includes(t)) el.click();
-                    }
-                }"""
-                )
+                try:
+                    await page.evaluate(
+                        """() => {
+                        const els = Array.from(document.querySelectorAll('button, a, [role="button"], span'));
+                        for (const el of els) {
+                            const t = (el.innerText || '').trim();
+                            if (['取消', 'Cancel', '跳过', 'Skip', 'Lewati', '以后再说', 'Not now', 'Nanti saja'].includes(t)) el.click();
+                        }
+                    }"""
+                    )
+                except Exception:
+                    pass
                 await asyncio.sleep(4.0)
                 if "one.google.com" in page.url and "accounts.google.com" not in page.url:
                     break
@@ -1379,42 +1382,58 @@ class GoogleUltraAutomator:
                 await self.safe_goto(page, attempt_url, timeout=40000)
                 await asyncio.sleep(3.5)
 
-            await page.evaluate(HOOK_JS)
-            await page.evaluate(f"window.__setDirectTest({json.dumps(cfg)})")
-
-            fb_btn = None
-            for _ in range(10):
-                await asyncio.sleep(1.2)
+            try:
                 await page.evaluate(HOOK_JS)
                 await page.evaluate(f"window.__setDirectTest({json.dumps(cfg)})")
-                fb_btn = await page.evaluate(
-                    """() => {
-                    const els = Array.from(document.querySelectorAll('button, a, [role="button"]'));
-                    const btns = els.filter(e => {
-                        const t = (e.innerText || '').trim();
-                        const r = e.getBoundingClientRect();
-                        return r.width > 15 && r.height > 15 && r.left >= 240 && (
-                            t.includes('开始使用') ||
-                            t.includes('获取优惠') ||
-                            t.includes('获取折扣') ||
-                            t.includes('换用此方案') ||
-                            t === '升级' ||
-                            t === 'Upgrade' ||
-                            t.includes('获取 Google AI Ultra') ||
-                            t.includes('Get started') ||
-                            t.includes('Get offer')
-                        );
-                    });
-                    if (btns.length > 0) {
-                        const btn = btns[btns.length - 1];
-                        btn.scrollIntoView({block: 'center'});
-                        const r = btn.getBoundingClientRect();
-                        btn.click();
-                        return {x: r.left + r.width / 2, y: r.top + r.height / 2, text: (btn.innerText || '').trim()};
-                    }
-                    return null;
-                }"""
-                )
+            except Exception:
+                await asyncio.sleep(2.0)
+                try:
+                    await page.evaluate(HOOK_JS)
+                    await page.evaluate(f"window.__setDirectTest({json.dumps(cfg)})")
+                except Exception:
+                    pass
+
+            fb_btn = None
+            for _ in range(12):
+                await asyncio.sleep(1.2)
+                try:
+                    await page.evaluate(HOOK_JS)
+                    await page.evaluate(f"window.__setDirectTest({json.dumps(cfg)})")
+                    fb_btn = await page.evaluate(
+                        """() => {
+                        const els = Array.from(document.querySelectorAll('button, a, [role="button"]'));
+                        const btns = els.filter(e => {
+                            const t = (e.innerText || '').trim();
+                            const r = e.getBoundingClientRect();
+                            return r.width > 15 && r.height > 15 && r.left >= 240 && (
+                                t.includes('开始使用') ||
+                                t.includes('获取优惠') ||
+                                t.includes('获取折扣') ||
+                                t.includes('换用此方案') ||
+                                t === '升级' ||
+                                t === 'Upgrade' ||
+                                t.includes('获取 Google AI Ultra') ||
+                                t.includes('Get started') ||
+                                t.includes('Get offer')
+                            );
+                        });
+                        if (btns.length > 0) {
+                            const btn = btns[btns.length - 1];
+                            btn.scrollIntoView({block: 'center'});
+                            const r = btn.getBoundingClientRect();
+                            btn.click();
+                            return {x: r.left + r.width / 2, y: r.top + r.height / 2, text: (btn.innerText || '').trim()};
+                        }
+                        return null;
+                    }"""
+                    )
+                except Exception as eval_err:
+                    err_msg = str(eval_err)
+                    if "destroyed" in err_msg or "navigat" in err_msg:
+                        self.log(f"[{step_tag}] 页面正在重定向加载中，等待稳定后重试注入...")
+                        await asyncio.sleep(2.0)
+                    continue
+
                 if fb_btn:
                     self.log(f"[{step_tag}] 已点击【{fb_btn.get('text', '')}】触发按钮，等待 Google Play 结账弹窗...")
                     break
@@ -1884,19 +1903,22 @@ class GoogleUltraAutomator:
                 await asyncio.sleep(2.0)
 
             # Click visible [role="radio"] (and/or reason text) to enable the "继续" button
-            await page.evaluate(
-                """() => {
-                const radios = Array.from(document.querySelectorAll('[role="radio"], input[type="radio"]')).filter(el => {
-                    const r = el.getBoundingClientRect();
-                    return r.width > 0 && r.height > 0;
-                });
-                if (radios.length > 0) {
-                    const target = radios[radios.length - 1];
-                    target.click();
-                    if (target.parentElement) target.parentElement.click();
-                }
-            }"""
-            )
+            try:
+                await page.evaluate(
+                    """() => {
+                    const radios = Array.from(document.querySelectorAll('[role="radio"], input[type="radio"]')).filter(el => {
+                        const r = el.getBoundingClientRect();
+                        return r.width > 0 && r.height > 0;
+                    });
+                    if (radios.length > 0) {
+                        const target = radios[radios.length - 1];
+                        target.click();
+                        if (target.parentElement) target.parentElement.click();
+                    }
+                }"""
+                )
+            except Exception:
+                pass
             await asyncio.sleep(0.5)
             vis_radios = page.locator('[role="radio"]:visible, input[type="radio"]:visible')
             if await vis_radios.count() > 0:
