@@ -740,6 +740,30 @@ class GoogleUltraAutomator:
                     await asyncio.sleep(4)
                     continue
 
+            # Check Account Recovery Password Prompt ("请输入您印象中最后一次登录此 Google 账号时使用的密码")
+            if any(k in body for k in ("请输入您印象中最后一次登录", "最后一次使用的密码", "Enter the last password you remember", "Masukkan sandi terakhir")) or "recovery" in page_obj.url:
+                rec_pwd = page_obj.locator('input[type="password"], input[name="password"], input[name="Passwd"]')
+                if await rec_pwd.count() > 0 and await rec_pwd.first.is_visible():
+                    self.log("检测到 Google 账号恢复/验证提示（请输入最后一次使用的密码），正在自动填入密码并点击下一步...")
+                    try:
+                        await rec_pwd.first.click(force=True)
+                        await asyncio.sleep(0.2)
+                        await rec_pwd.first.press("Control+A")
+                        await asyncio.sleep(0.1)
+                        await rec_pwd.first.press("Backspace")
+                        await asyncio.sleep(0.2)
+                        await rec_pwd.first.press_sequentially(password, delay=75)
+                        await asyncio.sleep(0.3)
+                        nxt = page_obj.locator('button:has-text("下一步"), button:has-text("Next"), button:has-text("Berikutnya"), #passwordNext').first
+                        if await nxt.count() > 0 and await nxt.is_visible():
+                            await nxt.click()
+                        else:
+                            await rec_pwd.first.press("Enter")
+                    except Exception:
+                        pass
+                    await asyncio.sleep(4.0)
+                    continue
+
             pwd = page_obj.locator('input[type="password"], input[name="Passwd"]')
             if await pwd.count() > 0 and await pwd.first.is_visible():
                 if pwd_submitted:
@@ -816,7 +840,7 @@ class GoogleUltraAutomator:
                             await opt.click(force=True)
                             await asyncio.sleep(3.5)
                             continue
-            elif ("challenge/dp" in page_obj.url or "challenge/az" in page_obj.url or "challenge/pk" in page_obj.url or "扫描二维码" in body) and "challenge/totp" not in page_obj.url:
+            elif ("challenge/dp" in page_obj.url or "challenge/az" in page_obj.url or "challenge/pk" in page_obj.url or "challenge/selection" in page_obj.url or "challenge/sk" in page_obj.url or "扫描二维码" in body or "选择您想要使用的登录方式" in body or "验证身份" in body) and "challenge/totp" not in page_obj.url:
                 if has_totp_secret:
                     totp_vis = page_obj.locator('input[type="tel"], input#totpPin, input[name="totpPin"]')
                     if await totp_vis.count() == 0 or not await totp_vis.first.is_visible():
