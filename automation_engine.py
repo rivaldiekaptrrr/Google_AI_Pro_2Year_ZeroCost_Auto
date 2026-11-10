@@ -891,6 +891,17 @@ class GoogleUltraAutomator:
                         await asyncio.sleep(3.5)
                         continue
 
+            # Check for Email OTP Verification Code screen (e.g. "验证码刚刚已通过电子邮件发送到了 mal•••••••@gmail.com")
+            is_email_otp = any(k in body for k in (
+                "通过电子邮件发送到了",
+                "已通过电子邮件发送",
+                "电子邮件发送到了",
+                "email with a verification code was just sent to",
+                "verification code was just sent to",
+                "Kode verifikasi baru saja dikirimkan",
+                "dikirimkan melalui email ke",
+            ))
+
             # 3. Two-step verification selection screen or prompt screens (challenge/dp, az, selection, etc.)
             is_selection_or_challenge = (
                 "challenge/dp" in page_obj.url or
@@ -900,7 +911,7 @@ class GoogleUltraAutomator:
                 "扫描二维码" in body or
                 "选择您想要使用的登录方式" in body or
                 "两步验证" in body or
-                "验证身份" in body
+                ("验证身份" in body and not is_email_otp)
             ) and "challenge/totp" not in page_obj.url
 
             if is_selection_or_challenge:
@@ -948,6 +959,38 @@ class GoogleUltraAutomator:
                                 break
                         continue
 
+            # Handle Email OTP Verification Code screen
+            if is_email_otp and "challenge/totp" not in page_obj.url:
+                masked_email_match = re.search(r'([a-zA-Z0-9_.•*]+@[a-zA-Z0-9_.-]+)', body)
+                masked_email = masked_email_match.group(1) if masked_email_match else ""
+                rec_email = (self.account.get("recovery_email") or "").strip()
+                target_email = rec_email if rec_email else masked_email
+
+                code_inp = page_obj.locator('input[type="tel"]:visible, input#code:visible, input#idvPin:visible, input#emailPin:visible, input[name="code"]:visible, input[name="pin"]:visible, input[type="text"]:visible, input[autocomplete="one-time-code"]:visible').first
+
+                self.log(f"📩 [Verifikasi Kode Email] Google telah mengirimkan kode OTP ke email pemulihan:【{target_email}】.")
+                self.log(f"👉 Akun ini login tanpa Google Authenticator. Silakan buka inbox email {target_email}, lalu ketik kodenya di jendela browser (bot menunggu Anda memasukkan kode hingga 90 detik)...")
+
+                for _wait_code in range(90):
+                    await asyncio.sleep(1.0)
+                    if "one.google.com" in page_obj.url or ("accounts.google.com" not in page_obj.url and "signin" not in page_obj.url):
+                        self.log("✅ Berhasil login setelah verifikasi kode email!")
+                        break
+                    if await code_inp.count() == 0 or not await code_inp.is_visible():
+                        break
+                    try:
+                        val = (await code_inp.input_value()).strip()
+                        if len(val) >= 6:
+                            nxt = page_obj.locator('button:has-text("下一步"), button:has-text("Next"), #next').first
+                            if await nxt.count() > 0 and await nxt.is_visible():
+                                self.log(f"🖱️ [Klik] Terdeteksi kode ({val}) telah diisi, mengklik tombol Next...")
+                                await nxt.click()
+                                await asyncio.sleep(3.0)
+                                break
+                    except Exception:
+                        pass
+                continue
+
             if "确认您的辅助邮箱" in body or "Confirm your recovery email" in body:
                 rec_email = (self.account.get("recovery_email") or "").strip()
                 kpe_inp = page_obj.locator('input#knowledge-preregistered-email-response:visible, input[name="knowledgePreregisteredEmailResponse"]:visible, input[type="email"]:visible')
@@ -970,6 +1013,13 @@ class GoogleUltraAutomator:
                     await kpe_inp.first.press_sequentially(rec_email, delay=65)
                     await kpe_inp.first.press("Enter")
                     for _ in range(8):
+                        await asyncio.sleep(1.0)
+                        if await kpe_inp.count() == 0 or not await kpe_inp.first.is_visible():
+                            break
+                    continue
+                elif not rec_email and await kpe_inp.count() > 0:
+                    self.log("⚠️ [Perlu Input Manual] Google meminta konfirmasi alamat email pemulihan, namun recovery_email belum diisi di accounts.txt. Silakan ketik alamat email pemulihan di jendela browser (menunggu hingga 45 detik)...")
+                    for _w in range(45):
                         await asyncio.sleep(1.0)
                         if await kpe_inp.count() == 0 or not await kpe_inp.first.is_visible():
                             break
@@ -1129,6 +1179,15 @@ class GoogleUltraAutomator:
                     timeout=40000,
                 )
                 await asyncio.sleep(3.5)
+
+        if "accounts.google.com" in page.url or "signin" in page.url:
+            self.log(f"⚠️ [Step 1] Login Google belum tuntas (masih berada di {page.url[:80]}). Menunggu hingga 45 detik untuk penyelesaian verifikasi...")
+            for _w in range(45):
+                await asyncio.sleep(1.0)
+                if "accounts.google.com" not in page.url and "signin" not in page.url:
+                    break
+            if "accounts.google.com" in page.url or "signin" in page.url:
+                raise RuntimeError(f"Step 1 Gagal: Login Google belum selesai (masih di {page.url[:80]}). Silakan selesaikan verifikasi akun sebelum lanjut.")
 
         await self.save_screenshot(page, "step1_done")
         self.log(f"✅ Step 1 完成，当前页面: {page.url[:80]}")
