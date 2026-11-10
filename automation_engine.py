@@ -634,6 +634,38 @@ class GoogleUltraAutomator:
                 await asyncio.sleep(4.0)
                 continue
 
+            if any(k in body for k in ("添加个人资料照片", "个人资料照片", "Add a profile picture", "Profile picture", "Tambahkan foto profil", "Foto profil")) or "profilepicture" in page_obj.url:
+                self.log("检测到 Google 添加个人资料照片提示页，正在自动点击【跳过/Skip】...")
+                skip_btn = page_obj.locator(
+                    'button:has-text("跳过"), [role="button"]:has-text("跳过"), a:has-text("跳过"), span:has-text("跳过"), '
+                    'button:has-text("Skip"), [role="button"]:has-text("Skip"), a:has-text("Skip"), '
+                    'button:has-text("Lewati"), [role="button"]:has-text("Lewati"), '
+                    'button:has-text("以后再说"), [role="button"]:has-text("以后再说"), '
+                    'button:has-text("Not now"), [role="button"]:has-text("Not now")'
+                ).first
+                if await skip_btn.count() > 0:
+                    try:
+                        await skip_btn.click(timeout=3000)
+                    except Exception:
+                        try:
+                            await skip_btn.click(force=True, timeout=3000)
+                        except Exception:
+                            pass
+                await page_obj.evaluate(
+                    """() => {
+                    const els = Array.from(document.querySelectorAll('button, a, [role="button"], span, div'));
+                    for (const el of els) {
+                        const t = (el.innerText || '').trim();
+                        if (['跳过', 'Skip', 'Lewati', '以后再说', 'Not now', 'Nanti saja'].includes(t)) {
+                            el.click();
+                            break;
+                        }
+                    }
+                }"""
+                )
+                await asyncio.sleep(4.0)
+                continue
+
             if "confirmidentifier" in page_obj.url:
                 self.log("检测到 confirmidentifier 页面，正在点击【下一步/Next】...")
                 nxt_btn = page_obj.locator('#identifierNext button, button:has-text("下一步"), button:has-text("Next"), #identifierNext').first
@@ -895,13 +927,13 @@ class GoogleUltraAutomator:
             except Exception:
                 body_txt = ""
 
-            if "gds.google.com" in page.url or "recoveryoptions" in page.url or "homeaddress" in page.url or "确保您始终都能登录" in body_txt or "设置住址" in body_txt:
+            if "gds.google.com" in page.url or "recoveryoptions" in page.url or "homeaddress" in page.url or "profilepicture" in page.url or "确保您始终都能登录" in body_txt or "设置住址" in body_txt or "添加个人资料照片" in body_txt:
                 await page.evaluate(
                     """() => {
                     const els = Array.from(document.querySelectorAll('button, a, [role="button"], span'));
                     for (const el of els) {
                         const t = (el.innerText || '').trim();
-                        if (['取消', 'Cancel', '跳过', 'Skip', '以后再说', 'Not now'].includes(t)) el.click();
+                        if (['取消', 'Cancel', '跳过', 'Skip', 'Lewati', '以后再说', 'Not now', 'Nanti saja'].includes(t)) el.click();
                     }
                 }"""
                 )
