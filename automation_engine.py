@@ -902,16 +902,57 @@ class GoogleUltraAutomator:
                 "dikirimkan melalui email ke",
             ))
 
-            # 3. Two-step verification selection screen or prompt screens (challenge/dp, az, selection, etc.)
+            # 3. Phone Notification / Number Matching screen (e.g. "查看您的 ZTE nubia Z80", "点按 86")
+            is_phone_push_active = (
+                ("challenge/dp" in page_obj.url or "challenge/az" in page_obj.url) or
+                any(k in body for k in (
+                    "查看您的", "Check your", "Periksa ponsel", "Periksa perangkat",
+                    "发送通知", "sent a notification", "mengirimkan notifikasi",
+                )) and any(k in body for k in ("点按", "Tap", "Ketuk", "在通知中点按是"))
+            ) and "challenge/totp" not in page_obj.url
+
+            if is_phone_push_active:
+                num_match = re.search(r'点按\s*(\d+)', body) or re.search(r'tap\s*(\d+)', body, re.I) or re.search(r'ketuk\s*(\d+)', body, re.I)
+                tap_num = num_match.group(1) if num_match else ""
+                dev_match = re.search(r'“([^”]+)”发送通知', body) or re.search(r'查看您的\s*([^\n\r，。]+)', body) or re.search(r'Check your\s*([^\n\r,.]+)', body, re.I)
+                device_name = dev_match.group(1).strip() if dev_match else "perangkat Anda"
+
+                if not has_totp_secret:
+                    msg_num = f" Angka konfirmasi di layar: 【{tap_num}】." if tap_num else ""
+                    self.log(f"📱 [Verifikasi HP] Google telah mengirim notifikasi ke【{device_name}】.{msg_num}")
+                    self.log(f"👉 Silakan buka HP Anda, ketuk 'Ya' / 'Setujui'{f', lalu pilih angka【{tap_num}】' if tap_num else ''}.")
+                    self.log("⏳ Bot sedang menunggu konfirmasi di HP dan TIDAK akan menekan tombol apapun (menunggu hingga 60 detik)...")
+                    for _w in range(60):
+                        await asyncio.sleep(1.0)
+                        if "challenge/dp" not in page_obj.url and "challenge/az" not in page_obj.url:
+                            try:
+                                cur_b = await page_obj.inner_text("body", timeout=1500)
+                                if not any(k in cur_b for k in ("查看您的", "发送通知", "点按")):
+                                    self.log("✅ Konfirmasi di HP berhasil disetujui, melanjutkan proses...")
+                                    break
+                            except Exception:
+                                break
+                    continue
+                else:
+                    # Only switch to Google Authenticator if the account actually has totp_secret configured
+                    try_other = page_obj.locator("text=/试试其他方式|尝试其他方式|Try another way|Coba cara lain/i").first
+                    if await try_other.count() > 0 and await try_other.is_visible():
+                        self.log("🔄 [Ganti Metode 2FA] Akun memiliki totp_secret, mengklik '试试其他方式' untuk beralih ke Google Authenticator...")
+                        try:
+                            await try_other.click(timeout=4000)
+                        except Exception:
+                            pass
+                        await asyncio.sleep(3.5)
+                        continue
+
+            # 4. Two-step verification selection screen (challenge/selection, etc.)
             is_selection_or_challenge = (
-                "challenge/dp" in page_obj.url or
-                "challenge/az" in page_obj.url or
                 "challenge/selection" in page_obj.url or
                 "challenge/sk" in page_obj.url or
                 "扫描二维码" in body or
                 "选择您想要使用的登录方式" in body or
                 "两步验证" in body or
-                ("验证身份" in body and not is_email_otp)
+                ("验证身份" in body and not is_email_otp and not is_phone_push_active)
             ) and "challenge/totp" not in page_obj.url
 
             if is_selection_or_challenge:
@@ -938,26 +979,17 @@ class GoogleUltraAutomator:
                             pass
                         await asyncio.sleep(3.0)
 
-                    # Check for "Try another way" if we still need to find another option
-                    try_other = page_obj.locator("text=/试试其他方式|尝试其他方式|Try another way|Coba cara lain/i").first
-                    if await try_other.count() > 0 and await try_other.is_visible():
-                        self.log("🔄 [Ganti Metode 2FA] Mengklik '试试其他方式' (Coba cara lain)...")
-                        try:
-                            await try_other.click(timeout=4000)
-                        except Exception:
-                            pass
-                        await asyncio.sleep(3.5)
-                        continue
-
-                    # If on challenge/dp or waiting for phone confirmation:
-                    if "challenge/dp" in page_obj.url or "challenge/az" in page_obj.url or "点按" in body:
-                        self.log("📱 [Menunggu Konfirmasi HP] Notifikasi telah dikirim ke perangkat Anda. Silakan buka HP Anda dan ketuk 'Ya' / setujui login (menunggu hingga 35 detik)...")
-                        for _w in range(35):
-                            await asyncio.sleep(1.0)
-                            if "challenge/dp" not in page_obj.url and "challenge/az" not in page_obj.url and "challenge/pk" not in page_obj.url:
-                                self.log("✅ Konfirmasi di HP berhasil diterima, melanjutkan proses...")
-                                break
-                        continue
+                    # Only click 'Try another way' if has_totp_secret
+                    if has_totp_secret:
+                        try_other = page_obj.locator("text=/试试其他方式|尝试其他方式|Try another way|Coba cara lain/i").first
+                        if await try_other.count() > 0 and await try_other.is_visible():
+                            self.log("🔄 [Ganti Metode 2FA] Mengklik '试试其他方式' (Coba cara lain)...")
+                            try:
+                                await try_other.click(timeout=4000)
+                            except Exception:
+                                pass
+                            await asyncio.sleep(3.5)
+                            continue
 
             # Handle Email OTP Verification Code screen
             if is_email_otp and "challenge/totp" not in page_obj.url:
