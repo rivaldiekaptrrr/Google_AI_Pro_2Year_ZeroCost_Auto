@@ -188,31 +188,247 @@ async def test_proxy(req: ProxyTestReq):
 async def import_accounts(req: ImportAccountsReq):
     cfg = load_config()
     existing = cfg.get("accounts", [])
-    existing_emails = {a["email"].lower().replace(".", "") for a in existing}
+    existing_emails = {a["email"].lower().replace(".", ""): a for a in existing}
 
-    lines = [l.strip() for l in req.raw_text.splitlines() if l.strip()]
+    raw = req.raw_text.strip()
+    if not raw:
+        append_log(f"[{time.strftime('%H:%M:%S')}] [IMPORT] ⚠️ Teks kosong. Tidak ada akun yang diimpor.")
+        return {"ok": True, "added": 0, "total": len(existing)}
+
     added = 0
-    for line in lines:
-        # Support delimiters: ----, —, |, /, \t, comma, or whitespace
-        if "----" in line:
-            parts = [p.strip() for p in line.split("----") if p.strip()]
-        elif "—" in line:
-            parts = [p.strip() for p in line.split("—") if p.strip()]
-        elif "|" in line:
-            parts = [p.strip() for p in line.split("|") if p.strip()]
-        elif "/" in line and "@" in line and "http://" not in line and "https://" not in line:
-            parts = [p.strip() for p in line.split("/") if p.strip()]
-        elif "\t" in line:
-            parts = [p.strip() for p in line.split("\t") if p.strip()]
-        elif "," in line:
-            parts = [p.strip() for p in line.split(",") if p.strip()]
-        else:
-            parts = [p.strip() for p in re.split(r"\s+", line) if p.strip()]
+    updated = 0
 
-        if len(parts) < 2:
+    # 1. Check if input is a JSON string
+    if (raw.startswith("[") and raw.endswith("]")) or (raw.startswith("{") and raw.endswith("}")):
+        try:
+            parsed_json = json.loads(raw)
+            if isinstance(parsed_json, dict):
+                parsed_json = [parsed_json]
+            if isinstance(parsed_json, list):
+                for item in parsed_json:
+                    if isinstance(item, dict) and "email" in item and "password" in item:
+                        em = str(item["email"]).strip()
+                        pw = str(item["password"]).strip()
+                        rec = str(item.get("recovery_email") or "").strip()
+                        totp = str(item.get("totp_secret") or "").strip()
+                        prx = str(item.get("proxy") or "").strip()
+                        norm_em = em.lower().replace(".", "")
+                        if norm_em in existing_emails:
+                            a = existing_emails[norm_em]
+                            a["password"] = pw
+                            if rec:
+                                a["recovery_email"] = rec
+                            if totp:
+                                a["totp_secret"] = totp
+                            if prx:
+                                a["proxy"] = prx
+                            updated += 1
+                        else:
+                            acc_id = f"Account_{len(existing) + 1}"
+                            new_acc = {
+                                "id": acc_id,
+                                "email": em,
+                                "password": pw,
+                                "recovery_email": rec,
+                                "totp_secret": totp,
+                                "proxy": prx,
+                                "ip_info": "",
+                                "status": "pending",
+                                "current_step": 0,
+                                "step_message": "新导入账号（待执行）",
+                                "expiry_date": "-",
+                                "last_screenshot": "",
+                            }
+                            existing.append(new_acc)
+                            existing_emails[norm_em] = new_acc
+                            added += 1
+                cfg["accounts"] = existing
+                save_config(cfg)
+                append_log(f"[{time.strftime('%H:%M:%S')}] [IMPORT] ✅ Berhasil mengimpor (JSON): +{added} akun baru, {updated} akun diperbarui (Total: {len(existing)})")
+                return {"ok": True, "added": added + updated, "total": len(existing)}
+        except Exception:
+            pass
+
+    # 2. Check for multi-line block style (e.g. EMAIL : xxx \n PASSWORD : yyy)
+    raw_lines = [l.strip() for l in raw.splitlines() if l.strip()]
+    has_multiline_kv = any(re.match(r'^(?:email|mail|user|username)\s*[:=]', l, re.I) for l in raw_lines) and \
+                       any(re.match(r'^(?:password|pass|pwd)\s*[:=]', l, re.I) for l in raw_lines)
+
+    if has_multiline_kv:
+        cur_acc = {}
+        for l in raw_lines:
+            m_em = re.match(r'^(?:email|mail|user|username)\s*[:=]\s*(.+)$', l, re.I)
+            m_pw = re.match(r'^(?:password|pass|pwd)\s*[:=]\s*(.+)$', l, re.I)
+            m_rec = re.match(r'^(?:rec|recovery|backup|recovery_email)\s*[:=]\s*(.+)$', l, re.I)
+            m_totp = re.match(r'^(?:totp|2fa|secret|key|totp_secret)\s*[:=]\s*(.+)$', l, re.I)
+            m_prx = re.match(r'^(?:proxy|prx)\s*[:=]\s*(.+)$', l, re.I)
+
+            if m_em:
+                if "email" in cur_acc and "password" in cur_acc:
+                    em = cur_acc["email"]
+                    if "@" not in em:
+                        em += "@gmail.com"
+                    norm = em.lower().replace(".", "")
+                    if norm in existing_emails:
+                        a = existing_emails[norm]
+                        a["password"] = cur_acc["password"]
+                        if cur_acc.get("recovery_email"): a["recovery_email"] = cur_acc["recovery_email"]
+                        if cur_acc.get("totp_secret"): a["totp_secret"] = cur_acc["totp_secret"]
+                        if cur_acc.get("proxy"): a["proxy"] = cur_acc["proxy"]
+                        updated += 1
+                    else:
+                        new_acc = {
+                            "id": f"Account_{len(existing) + 1}",
+                            "email": em,
+                            "password": cur_acc["password"],
+                            "recovery_email": cur_acc.get("recovery_email", ""),
+                            "totp_secret": cur_acc.get("totp_secret", ""),
+                            "proxy": cur_acc.get("proxy", ""),
+                            "ip_info": "",
+                            "status": "pending",
+                            "current_step": 0,
+                            "step_message": "新导入账号（待执行）",
+                            "expiry_date": "-",
+                            "last_screenshot": "",
+                        }
+                        existing.append(new_acc)
+                        existing_emails[norm] = new_acc
+                        added += 1
+                    cur_acc = {}
+                em_val = m_em.group(1).strip().strip("'\"`")
+                if "@" not in em_val:
+                    em_val += "@gmail.com"
+                cur_acc["email"] = em_val
+            elif m_pw:
+                cur_acc["password"] = m_pw.group(1).strip().strip("'\"`")
+            elif m_rec:
+                cur_acc["recovery_email"] = m_rec.group(1).strip().strip("'\"`")
+            elif m_totp:
+                cur_acc["totp_secret"] = m_totp.group(1).strip().strip("'\"`")
+            elif m_prx:
+                cur_acc["proxy"] = m_prx.group(1).strip().strip("'\"`")
+
+        if "email" in cur_acc and "password" in cur_acc:
+            em = cur_acc["email"]
+            if "@" not in em:
+                em += "@gmail.com"
+            norm = em.lower().replace(".", "")
+            if norm in existing_emails:
+                a = existing_emails[norm]
+                a["password"] = cur_acc["password"]
+                if cur_acc.get("recovery_email"): a["recovery_email"] = cur_acc["recovery_email"]
+                if cur_acc.get("totp_secret"): a["totp_secret"] = cur_acc["totp_secret"]
+                if cur_acc.get("proxy"): a["proxy"] = cur_acc["proxy"]
+                updated += 1
+            else:
+                new_acc = {
+                    "id": f"Account_{len(existing) + 1}",
+                    "email": em,
+                    "password": cur_acc["password"],
+                    "recovery_email": cur_acc.get("recovery_email", ""),
+                    "totp_secret": cur_acc.get("totp_secret", ""),
+                    "proxy": cur_acc.get("proxy", ""),
+                    "ip_info": "",
+                    "status": "pending",
+                    "current_step": 0,
+                    "step_message": "新导入账号（待执行）",
+                    "expiry_date": "-",
+                    "last_screenshot": "",
+                }
+                existing.append(new_acc)
+                existing_emails[norm] = new_acc
+                added += 1
+
+        cfg["accounts"] = existing
+        save_config(cfg)
+        total_affected = added + updated
+        append_log(f"[{time.strftime('%H:%M:%S')}] [IMPORT] ✅ Berhasil mengimpor (Multi-baris): +{added} akun baru, {updated} diperbarui (Total: {len(existing)})")
+        return {"ok": True, "added": total_affected, "total": len(existing)}
+
+    # 3. Line by line parsing
+    lines = [l.strip() for l in raw.splitlines() if l.strip()]
+    skipped_lines = []
+
+    for line in lines:
+        clean_l = line.strip().strip("'\"`")
+        if not clean_l or clean_l.startswith("#") or clean_l.startswith("//"):
             continue
 
-        # Detect if first part is a label (no '@') or email (has '@')
+        # Check for Key-Value format: e.g. "Email: xxx | Password: yyy" or "user=xxx pass=yyy"
+        if ("email" in clean_l.lower() or "mail" in clean_l.lower()) and ("pass" in clean_l.lower() or "pwd" in clean_l.lower()):
+            em_m = re.search(r'(?:email|mail|user|username)\s*[:=]\s*([^\s,;|]+)', clean_l, re.I)
+            pw_m = re.search(r'(?:pass|password|pwd)\s*[:=]\s*([^\s,;|]+)', clean_l, re.I)
+            rec_m = re.search(r'(?:rec|recovery|backup)\s*[:=]\s*([^\s,;|]+)', clean_l, re.I)
+            totp_m = re.search(r'(?:totp|2fa|secret|key)\s*[:=]\s*([^\s,;|]+)', clean_l, re.I)
+            if em_m and pw_m:
+                email = em_m.group(1).strip().strip("'\"")
+                password = pw_m.group(1).strip().strip("'\"")
+                recovery_email = rec_m.group(1).strip().strip("'\"") if rec_m else ""
+                totp_secret = totp_m.group(1).strip().strip("'\"") if totp_m else ""
+                norm_email = email.lower().replace(".", "")
+                if norm_email in existing_emails:
+                    a = existing_emails[norm_email]
+                    a["password"] = password
+                    if recovery_email:
+                        a["recovery_email"] = recovery_email
+                    if totp_secret:
+                        a["totp_secret"] = totp_secret
+                    updated += 1
+                else:
+                    acc_id = f"Account_{len(existing) + 1}"
+                    new_acc = {
+                        "id": acc_id,
+                        "email": email,
+                        "password": password,
+                        "recovery_email": recovery_email,
+                        "totp_secret": totp_secret,
+                        "proxy": "",
+                        "ip_info": "",
+                        "status": "pending",
+                        "current_step": 0,
+                        "step_message": "新导入账号（待执行）",
+                        "expiry_date": "-",
+                        "last_screenshot": "",
+                    }
+                    existing.append(new_acc)
+                    existing_emails[norm_email] = new_acc
+                    added += 1
+                continue
+
+        # Protect proxy protocol before splitting:
+        line_prot = re.sub(r'://', '__PROT__', clean_l)
+
+        # Delimiters detection:
+        if "----" in line_prot:
+            raw_parts = line_prot.split("----")
+        elif "---" in line_prot:
+            raw_parts = line_prot.split("---")
+        elif "--" in line_prot and "@" in line_prot:
+            raw_parts = line_prot.split("--")
+        elif "—" in line_prot:
+            raw_parts = line_prot.split("—")
+        elif "|" in line_prot:
+            raw_parts = line_prot.split("|")
+        elif ";" in line_prot:
+            raw_parts = line_prot.split(";")
+        elif "," in line_prot:
+            raw_parts = line_prot.split(",")
+        elif "\t" in line_prot:
+            raw_parts = line_prot.split("\t")
+        elif "/" in line_prot and "@" in line_prot and "__PROT__" not in line_prot:
+            raw_parts = line_prot.split("/")
+        elif ":" in line_prot:
+            # Common email:password format
+            raw_parts = line_prot.split(":")
+        else:
+            raw_parts = re.split(r"\s+", line_prot)
+
+        parts = [p.replace('__PROT__', '://').strip().strip("'\"`") for p in raw_parts if p.strip()]
+
+        if len(parts) < 2:
+            skipped_lines.append(clean_l[:60])
+            continue
+
         if "@" in parts[0]:
             email = parts[0]
             password = parts[1]
@@ -223,7 +439,13 @@ async def import_accounts(req: ImportAccountsReq):
             email = parts[1]
             password = parts[2]
             rest = parts[3:]
+        elif len(parts) >= 2 and not parts[0].lower().startswith("account_"):
+            email = parts[0] if "@" in parts[0] else parts[0] + "@gmail.com"
+            password = parts[1]
+            rest = parts[2:]
+            acc_id = f"Account_{len(existing) + 1}"
         else:
+            skipped_lines.append(clean_l[:60])
             continue
 
         recovery_email = ""
@@ -241,15 +463,15 @@ async def import_accounts(req: ImportAccountsReq):
 
         norm_email = email.lower().replace(".", "")
         if norm_email in existing_emails:
-            for a in existing:
-                if a["email"].lower().replace(".", "") == norm_email:
-                    a["password"] = password
-                    if recovery_email:
-                        a["recovery_email"] = recovery_email
-                    if totp_secret:
-                        a["totp_secret"] = totp_secret
-                    if proxy_str:
-                        a["proxy"] = proxy_str
+            a = existing_emails[norm_email]
+            a["password"] = password
+            if recovery_email:
+                a["recovery_email"] = recovery_email
+            if totp_secret:
+                a["totp_secret"] = totp_secret
+            if proxy_str:
+                a["proxy"] = proxy_str
+            updated += 1
             continue
 
         existing.append(
@@ -268,13 +490,21 @@ async def import_accounts(req: ImportAccountsReq):
                 "last_screenshot": "",
             }
         )
-        existing_emails.add(norm_email)
+        existing_emails[norm_email] = existing[-1]
         added += 1
 
     cfg["accounts"] = existing
     save_config(cfg)
-    append_log(f"[{time.strftime('%H:%M:%S')}] [IMPORT] ✅ 成功导入/更新 {added} 个账号（当前共 {len(existing)} 个账号）")
-    return {"ok": True, "added": added, "total": len(existing)}
+    total_affected = added + updated
+
+    if total_affected > 0:
+        append_log(f"[{time.strftime('%H:%M:%S')}] [IMPORT] ✅ Berhasil mengimpor/memperbarui {total_affected} akun (+{added} baru, {updated} diperbarui). Total: {len(existing)} akun")
+    else:
+        sample_skip = f" Contoh baris gagal: '{skipped_lines[0]}'" if skipped_lines else ""
+        append_log(f"[{time.strftime('%H:%M:%S')}] [IMPORT] ⚠️ Gagal mengimpor: {len(lines)} baris teks tidak cocok dengan format.{sample_skip}")
+        append_log(f"[{time.strftime('%H:%M:%S')}] [IMPORT] 💡 Format yang didukung: email:password atau email,password atau email----password atau email|password")
+
+    return {"ok": True, "added": total_affected, "total": len(existing)}
 
 
 @app.post("/api/accounts/delete")

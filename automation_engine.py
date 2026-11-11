@@ -2263,10 +2263,21 @@ class GoogleUltraAutomator:
         resolved_proxy = resolve_account_proxy(self.account, self.target_region, self.proxy_template)
         parsed_proxy = parse_proxy_string(resolved_proxy)
 
+        # Clear stale cache and temporary session files to ensure a 100% fresh environment
+        for c_subdir in ("Cache", "Code Cache", "GPUCache", "DawnCache"):
+            c_target = os.path.join(user_data_dir, "Default", c_subdir)
+            if os.path.exists(c_target):
+                try:
+                    shutil.rmtree(c_target, ignore_errors=True)
+                except Exception:
+                    pass
+
         chrome_args = [
             CHROME_PATH,
             f"--remote-debugging-port={self.port}",
             f"--user-data-dir={user_data_dir}",
+            "--incognito",
+            "--disable-cache",
             "--no-first-run",
             "--no-default-browser-check",
             "--disable-popup-blocking",
@@ -2294,7 +2305,7 @@ class GoogleUltraAutomator:
                 chrome_args.append(f"--proxy-server={p_url}")
                 self.log(f"🛡️ 已为 [{self.account['id']}] 挂载专属代理 -> {p_url}")
         else:
-            self.log(f"正在启动 Chrome 独立环境 (端口: {self.port}, 未配置独立代理，使用系统当前网络)...")
+            self.log(f"🕶️ Membuka Chrome dalam mode Incognito (Penyamaran) agar cache dan data sesi selalu fresh (port: {self.port}, menggunakan jaringan saat ini)...")
 
         chrome_args.append("about:blank")
 
